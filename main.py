@@ -7,6 +7,9 @@ import numpy
 pygame.init()
 pygame.mixer.init()  # 音声システムの初期化
 
+# クロックの初期化
+clock = pygame.time.Clock()
+
 # 画面設定
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
@@ -20,10 +23,13 @@ RED = (255, 0, 0)
 YELLOW = (255, 255, 0)
 ORANGE = (255, 165, 0)
 GREEN = (0, 255, 0)
-LIGHT_GREEN = (250, 255, 250)  # ネギ用の緑色をより鮮やかに
-DARK_GREEN = (70, 120, 20)    # 深みのある緑を追加
-NEGI_COLOR = (150, 255, 150)  # ネギビーム用の色を追加
-YELLOWISH_WHITE = (255, 255, 230)  # 黄色みがかった白を追加
+BLUE = (0, 0, 255)
+PURPLE = (128, 0, 128)
+
+# ネギライフル用の色
+DARK_GREEN = (0, 100, 0)
+LIGHT_GREEN = (150, 255, 150)
+NEGI_COLOR = (150, 255, 150)  # ネギの色
 
 # ネギライフルのパラメータ
 NEGI_RIFLE_PARAMS = {
@@ -33,7 +39,7 @@ NEGI_RIFLE_PARAMS = {
     "tip_width": 4,       # 先端部分の幅
     "tip_length": 8,      # 先端部分の長さ
     "tip_highlight_length": 2,  # 先端のハイライト部分の長さ
-    "color": LIGHT_GREEN, # メインカラー
+    "color": (150, 255, 150), # メインカラー
     "tip_color": WHITE,   # 先端部分の色
     "tip_highlight_color": YELLOW,  # 先端のハイライト色
 }
@@ -54,7 +60,7 @@ BULLET_TYPES = {
             1: {
                 "speed": 1.5,
                 "damage": 2.0,
-                "color": NEGI_COLOR,  # ネギカラーに変更
+                "color": (150, 255, 150),  # ネギカラーに変更
                 "height_multiplier": 2.0,  # 高さを2倍に
                 "width_multiplier": 1.5,  # 幅を1.5倍に
                 "penetrate": True,  # 貫通効果を追加
@@ -109,91 +115,444 @@ ENEMY_TYPES = {
         "score": 100,      # 撃破時のスコア
         "homing_factor": 0.1,  # 自機へのホーミング強度（小さいほど緩やか）
         "explosion_radius": 60,  # 爆発の影響範囲
-        "explosion_damage": 30   # 爆発によるダメージ
+        "explosion_damage": 30,   # 爆発によるダメージ
+        "min_score": 0      # この敵が登場する最小スコア
     },
-    # 後々追加する敵タイプのために余白を残しておく
+    "speeder": {
+        "width": 25,
+        "height": 25,
+        "hp": 30,           # 耐久力は低いが素早い
+        "base_speed": 5,    # 通常より速い
+        "color": YELLOW,
+        "score": 150,      # スコアも高め
+        "homing_factor": 0.12,  # ホーミング性能も高め
+        "explosion_radius": 45,  # 爆発範囲は小さめ
+        "explosion_damage": 20,  # 爆発ダメージも小さめ
+        "min_score": 3000   # 3000点以上で登場
+    },
+    "tank": {
+        "width": 40,
+        "height": 40,
+        "hp": 100,          # 耐久力が高い
+        "base_speed": 2,    # 移動は遅め
+        "color": BLUE,
+        "score": 250,      # 高得点
+        "homing_factor": 0.05,  # ホーミングは鈍い
+        "explosion_radius": 90,  # 爆発範囲が大きい
+        "explosion_damage": 40,  # 爆発ダメージも大きい
+        "min_score": 5000   # 5000点以上で登場
+    },
+    "assassin": {
+        "width": 20,
+        "height": 35,
+        "hp": 70,           # それなりの耐久力
+        "base_speed": 4,    # 素早い
+        "color": (128, 0, 128),  # 紫色
+        "score": 300,       # かなり高得点
+        "homing_factor": 0.15,  # 強力なホーミング能力
+        "explosion_radius": 70,  # かなりの爆発範囲
+        "explosion_damage": 45,  # 大きな爆発ダメージ
+        "min_score": 10000  # 10000点以上で登場
+    }
 }
 
 # 敵のパラメータ定義の後に追加
 MAX_ENEMIES = 100  # 敵の最大出現数
+BASE_ENEMY_SPAWN_RATE = 0.02  # 基本の敵出現確率
+BASE_ENEMY_SPEED = 3.0  # 基本の敵速度
+
+# 難易度に関する関数
+def calculate_difficulty_factor(current_score):
+    # 基本は1.0、最大3.0まで
+    base_factor = 1.0
+    # スコアに応じて難易度上昇（10000点で最大）
+    score_factor = min(current_score / 10000.0, 2.0)
+    return base_factor + score_factor
+
+# 難易度レベルの名前を取得（表示用）
+def get_difficulty_name(factor):
+    if factor < 1.2:
+        return "EASY"
+    elif factor < 1.6:
+        return "NORMAL"
+    elif factor < 2.0:
+        return "HARD"
+    elif factor < 2.5:
+        return "VERY HARD"
+    else:
+        return "EXTREME"
+
+# スコアに応じた敵タイプを選択
+def select_enemy_type(current_score):
+    # スコアに基づいて出現可能な敵タイプをリストアップ
+    available_types = []
+    for enemy_type, params in ENEMY_TYPES.items():
+        if current_score >= params["min_score"]:
+            available_types.append(enemy_type)
+    
+    # 利用可能な敵タイプがない場合は「mob」をデフォルトとして使用
+    if not available_types:
+        return "mob"
+    
+    # スコアに合わせた重み付けを計算
+    weights = []
+    for enemy_type in available_types:
+        base_weight = 1.0
+        score_diff = current_score - ENEMY_TYPES[enemy_type]["min_score"]
+        if score_diff > 0:
+            weight_bonus = min(score_diff / 5000.0, 2.0)
+            base_weight += weight_bonus
+        weights.append(base_weight)
+    
+    # 重み付きランダム選択
+    return random.choices(available_types, weights=weights, k=1)[0]
+
+# スコアに基づく敵の出現確率を計算
+def get_enemy_spawn_chance(current_score):
+    # ベースの出現確率
+    base_chance = BASE_ENEMY_SPAWN_RATE
+    # 難易度係数に基づいて出現確率を調整
+    difficulty = calculate_difficulty_factor(current_score)
+    return base_chance * difficulty
+
+# スコアに基づく敵の速度係数を計算
+def get_enemy_speed_factor(current_score):
+    # 難易度係数に基づいて敵の速度を調整
+    return calculate_difficulty_factor(current_score)
 
 # リングエフェクトクラス
 class RingEffect:
-    def __init__(self, x, y, color=WHITE, max_radius=40, expand_speed=3, fade_speed=0.05):
+    def __init__(self, x, y, color=WHITE, max_radius=40, expand_speed=2, fade_speed=0.02, velocity_x=0, velocity_y=0, gravity=0):
         self.x = x
         self.y = y
-        self.radius = 10
+        self.radius = max_radius  # 初期サイズを最大サイズに
         self.max_radius = max_radius
-        self.life = 1.0
-        self.fade_speed = fade_speed
-        self.expand_speed = expand_speed
+        self.expand_speed = expand_speed  # 拡大速度を保存
+        self.life = 2.0  # 寿命を2倍に
+        self.fade_speed = fade_speed * 2  # フェード速度を2倍に
         self.color = color
         
+        # 移動用のパラメータ
+        self.velocity_x = velocity_x
+        self.velocity_y = velocity_y
+        self.gravity = gravity
+        
     def update(self):
+        # リングの拡大
         self.radius += self.expand_speed
+        
+        # 透明度の減少
         self.life -= self.fade_speed
+        
+        # 位置の更新（飛散効果）
+        self.x += self.velocity_x
+        self.y += self.velocity_y
+        
+        # 重力の影響
+        self.velocity_y += self.gravity
+        
         return self.life > 0
         
     def draw(self, screen):
-        if self.life > 0:
-            alpha = int(255 * self.life)
-            ring_surface = pygame.Surface((self.radius * 2 + 2, self.radius * 2 + 2), pygame.SRCALPHA)
-            pygame.draw.circle(ring_surface, (*self.color, alpha), (self.radius + 1, self.radius + 1), self.radius, 2)
-            screen.blit(ring_surface, (self.x - self.radius - 1, self.y - self.radius - 1))
+        if self.life <= 0 or self.radius <= 0:
+            return
+            
+        try:
+            # 色の処理をさらに安全に
+            default_color = (255, 255, 255)  # デフォルト色（白）
+            
+            if not isinstance(self.color, (tuple, list)):
+                rgb = default_color
+            elif len(self.color) < 3:
+                rgb = default_color
+            else:
+                # RGB値を整数に変換して範囲内に収める
+                try:
+                    r = max(0, min(255, int(self.color[0])))
+                    g = max(0, min(255, int(self.color[1])))
+                    b = max(0, min(255, int(self.color[2])))
+                    rgb = (r, g, b)
+                except (ValueError, TypeError):
+                    rgb = default_color
+            
+            # アルファ値の計算（0〜1の範囲を確保）
+            life_clamped = max(0.0, min(1.0, float(self.life)))
+            alpha = int(255 * life_clamped)
+            
+            # サーフェスの作成
+            radius_int = max(1, int(self.radius))
+            ring_size = radius_int * 2 + 4
+            ring_surface = pygame.Surface((ring_size, ring_size), pygame.SRCALPHA)
+            
+            # 円の描画
+            center = (ring_size // 2, ring_size // 2)
+            width = 2 if radius_int > 2 else 1
+            
+            # 色とアルファ値を組み合わせる
+            color_with_alpha = (*rgb, alpha)
+            
+            # 円を描画
+            pygame.draw.circle(ring_surface, color_with_alpha, center, radius_int, width)
+            
+            # 画面に描画
+            x_pos = int(self.x - center[0])
+            y_pos = int(self.y - center[1])
+            screen.blit(ring_surface, (x_pos, y_pos))
+            
+        except Exception as e:
+            # どんなエラーが発生しても処理を続行
+            pass
 
 # プレイヤークラス
 class Player:
     def __init__(self):
+        # プレイヤーの位置と大きさ
         self.width = 30
         self.height = 30
-        self.x = SCREEN_WIDTH // 2
-        self.y = SCREEN_HEIGHT - 50
-        self.base_speed = 4
-        self.dash_speed = 8
-        self.current_speed = self.base_speed
-        self.heat = 0
+        self.x = SCREEN_WIDTH // 2 - self.width // 2
+        self.y = SCREEN_HEIGHT // 2 - self.height // 2
+        
+        # 移動関連
+        self.max_speed = 5.6  # 7.0の80%に減速
+        self.acceleration = 0.3
+        self.deceleration = 0.2
+        self.velocity_x = 0
+        self.velocity_y = 0
+        self.facing_right = True
+        self.last_direction = 'east'  # 8方向のいずれか
+        self.input_buffer = {'left': False, 'right': False, 'up': False, 'down': False, 'shift': False}
+        
+        # 旋回関連
+        self.movement_angle = 0  # 移動の向き（度数法、0=右、90=上）
+        self.target_angle = 0    # 目標の向き
+        self.max_turn_rate = 30.0  # 最大旋回速度（度/フレーム）
+        
+        # ヒート関連
+        self.heat = 0           # 現在のヒート値
+        self.max_heat = 100     # 最大ヒート値
+        
+        # アドバタイズモード関連
+        self.advertise_mode = True  # デフォルトで有効に変更
+        self.advertise_action_timer = 0  # アクションタイマー
+        self.advertise_action_interval = 60  # アクションの間隔（フレーム）
+        self.advertise_movement_timer = 0  # 移動タイマー
+        self.advertise_movement_duration = 120  # 一方向への移動持続時間
+        self.advertise_target_x = None  # 移動目標X座標
+        self.advertise_target_y = None  # 移動目標Y座標
+        self.visual_mode = True  # 画面認識モードをデフォルトで有効
+        self.detected_enemies = []  # 画面から検出した敵
+        self.detected_safe_zones = []  # 画面から検出した安全地帯
+        self.visual_analysis_timer = 0  # 画面分析タイマー
+        
+        # ダッシュ関連
+        self.dash_speed = 8.0  # 10.0の80%に減速
+        self.dash_duration = 120  # フレーム数
+        self.dash_cooldown_time = 45  # クールダウン時間（フレーム数）
+        self.dash_cooldown = 0  # 現在のクールダウン残り時間
+        self.is_dashing = False
+        self.was_dashing = False
+        self.dash_effects = []  # ダッシュ時のエフェクト
+        
+        # その他のパラメータ
         self.hp = 100
-        self.invincible_time = 0
+        self.max_hp = 100
+        
+        # 被弾エフェクト関連
+        self.damage_effect_time = 0
+        self.ring_effects = []
+        
+        # 武器関連
+        self.weapon_cooldown = 0
+        self.beam_rifle_cooldown = 0
+        self.beam_rifle_cooldown_time = 20  # ビームライフルのクールダウン時間
+        self.charge_level = 0
+        self.charge_target_position = None
+        
+        # ドリフト関連
+        self.drift_angle = 0      # ドリフト時の角度
+        self.drift_power = 0      # ドリフトの強さ
+        self.max_drift_angle = 45 # 最大ドリフト角度
+        self.drift_recovery = 0.1 # ドリフトからの復帰速度
+        self.is_drifting = False
+        
+        # 慣性とカーブ用のパラメータ
+        self.max_turn_rate = 0.15  # 最大旋回速度
+        self.turn_acceleration = 0.01  # 旋回加速度
+        self.current_turn_rate = 0  # 現在の旋回速度
+        self.movement_angle = 0  # 現在の移動角度（ラジアン）
+        self.target_angle = 0  # 目標角度（ラジアン）
+        self.grip_level = 1.0    # グリップレベル（1.0が通常）
+        
+        self.dash_cooldown = 0
+        self.dash_duration = 120   # ダッシュ持続時間
+        self.dash_cooldown_time = 45  # ダッシュのクールダウン時間
+        self.facing_right = True
         self.last_direction = None
         self.is_dashing = False
         self.was_dashing = False
-        self.ring_effects = []
-        self.dash_effect_timer = 0
+        self.heat = 0
+        self.invincible_time = 0
         self.locked_enemy = None
         self.lock_on_range = 500
-        self.facing_right = True  # プレイヤーの向き（True: 右向き, False: 左向き）
-        self.charge_level = 0
         self.charge_start_time = 0
         self.is_charging = False
-        self.shot_cooldown = 0  # 射撃クールダウン用の変数を追加
-        self.shot_cooldown_time = 10  # 発射間隔（フレーム数）
-        self.weapon_cooldown = 0  # 武器のクールダウンタイマー
-        self.charge_target_position = None  # チャージ完了時の密集ターゲット位置
-        self.charge_complete = False  # チャージ完了フラグを追加
-        self.dx = 0  # 現在の移動方向X
-        self.dy = 0  # 現在の移動方向Y
-        self.direction_smoothing = 0.2  # 通常時の方向転換の滑らかさ
-        self.dash_direction_smoothing = 0.05  # ダッシュ時の方向転換の滑らかさ（小さいほどゆるやか）
-        self.last_input_dx = 0  # 前回の入力方向X
-        self.last_input_dy = 0  # 前回の入力方向Y
-        self.charge_sound_playing = False  # チャージ音の再生状態を管理
-        self.velocity_x = 0  # 速度Xを追加
-        self.velocity_y = 0  # 速度Yを追加
-        self.acceleration = 0.3  # 加速度
-        self.deceleration = 0.2  # 減速度
-        self.max_velocity = 4  # 最大速度（通常時）
-        self.max_dash_velocity = 8  # 最大速度（ダッシュ時）
-        self.input_buffer = {
-            'left': False,
-            'right': False,
-            'up': False,
-            'down': False,
-            'shift': False
-        }  # キー入力のバッファを追加
-        self.dash_cooldown = 0  # ダッシュのクールダウンを追加
-        self.dash_duration = 120  # ダッシュの持続時間（フレーム）を3倍に
-        self.dash_cooldown_time = 45  # ダッシュのクールダウン時間（フレーム）
+        self.shot_cooldown = 0
+        self.shot_cooldown_time = 10
+        self.charge_sound_playing = False
+        self.dash_effects = []  # ダッシュエフェクトのリストを追加
+
+    def move(self, keys):
+        if self.invincible_time > 0:
+            self.invincible_time -= 1
         
+        # キー入力の状態を更新
+        self.input_buffer['left'] = keys[pygame.K_LEFT]
+        self.input_buffer['right'] = keys[pygame.K_RIGHT]
+        self.input_buffer['up'] = keys[pygame.K_UP]
+        self.input_buffer['down'] = keys[pygame.K_DOWN]
+        self.input_buffer['shift'] = keys[pygame.K_LSHIFT]
+        
+        # ダッシュの処理
+        if self.dash_cooldown > 0:
+            self.dash_cooldown -= 1
+            
+        # ヒートゲージの管理
+        # ダッシュ中はヒートゲージを上昇させる
+        if self.is_dashing:
+            # ヒートゲージを上昇（上昇率は調整可能）
+            self.heat += 1.0
+            # 最大値に達したらダッシュ解除
+            if self.heat >= self.max_heat:
+                self.is_dashing = False
+                self.dash_cooldown = self.dash_cooldown_time
+            # 最大値を超えないようにする
+            self.heat = min(self.heat, self.max_heat)
+        else:
+            # ダッシュしていない時はヒートゲージを徐々に下げる
+            self.heat = max(0, self.heat - 0.2)
+
+        # ヒートゲージが高温状態（90%以上）になるとダッシュできない
+        heat_threshold = self.max_heat * 0.9
+        can_dash = self.heat < heat_threshold and self.dash_cooldown <= 0
+            
+        # ダッシュの開始判定
+        if self.input_buffer['shift'] and not self.was_dashing and can_dash:
+            self.is_dashing = True
+            self.dash_cooldown = self.dash_duration
+            sound_effects.play('dash')
+            # ダッシュエフェクトを追加（2倍の量で）
+            center_x = self.x + self.width/2
+            center_y = self.y + self.height/2
+            # 外側のリング（2セット）
+            self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+            self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3.2, 0.1))
+            # 内側のリング（2セット）
+            self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+            self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.7, 0.15))
+        elif not self.input_buffer['shift'] and self.dash_cooldown <= 0:
+            self.is_dashing = False
+            self.dash_cooldown = self.dash_cooldown_time
+        
+        self.was_dashing = self.is_dashing
+
+        # ダッシュエフェクトの更新
+        self.dash_effects = [effect for effect in self.dash_effects if effect.update()]
+        if self.is_dashing and pygame.time.get_ticks() % 3 == 0:
+            center_x = self.x + self.width/2
+            center_y = self.y + self.height/2
+            self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 20, 2, 0.2))
+        
+        # 移動方向の計算
+        dx = 0
+        dy = 0
+        
+        if self.input_buffer['left']: dx -= 1
+        if self.input_buffer['right']: dx += 1
+        if self.input_buffer['up']: dy -= 1
+        if self.input_buffer['down']: dy += 1
+
+        # 斜め移動の速度を正規化
+        if dx != 0 and dy != 0:
+            length = math.sqrt(2)
+            dx /= length
+            dy /= length
+
+        # 入力方向に基づく目標角度の計算
+        if dx != 0 or dy != 0:
+            # 入力方向から角度を計算
+            self.target_angle = math.degrees(math.atan2(-dy, dx))
+            
+            # 旋回速度を計算し、現在の角度を更新
+            angle_diff = (self.target_angle - self.movement_angle + 180) % 360 - 180
+            turn_rate = min(abs(angle_diff), self.max_turn_rate) * (1 if angle_diff > 0 else -1)
+            self.movement_angle = (self.movement_angle + turn_rate) % 360
+
+        # 目標速度の計算
+        current_max_speed = self.dash_speed if self.is_dashing else self.max_speed
+        
+        # 入力と現在の角度に基づいて速度を計算
+        if dx != 0 or dy != 0:
+            # 方向キー入力がある場合、その方向へ80%、角度方向へ20%の重みで計算
+            input_weight = 0.8
+            angle_weight = 1.0 - input_weight
+            
+            # 入力方向の速度成分
+            input_vel_x = dx * current_max_speed
+            input_vel_y = dy * current_max_speed
+            
+            # 角度方向の速度成分
+            angle_rad = math.radians(self.movement_angle)
+            angle_vel_x = math.cos(angle_rad) * current_max_speed
+            angle_vel_y = -math.sin(angle_rad) * current_max_speed
+            
+            # 重み付け合成
+            target_velocity_x = input_vel_x * input_weight + angle_vel_x * angle_weight
+            target_velocity_y = input_vel_y * input_weight + angle_vel_y * angle_weight
+        else:
+            # 入力がない場合は減速
+            target_velocity_x = 0
+            target_velocity_y = 0
+
+        # 現在の速度を目標速度に近づける
+        if dx != 0 or dy != 0:
+            # 加速（ダッシュ中は加速度を上げる）
+            current_acceleration = self.acceleration * (1.5 if self.is_dashing else 1.0)
+            self.velocity_x += (target_velocity_x - self.velocity_x) * current_acceleration
+            self.velocity_y += (target_velocity_y - self.velocity_y) * current_acceleration
+        else:
+            # 減速
+            self.velocity_x *= (1 - self.deceleration)
+            self.velocity_y *= (1 - self.deceleration)
+
+        # 位置の更新
+        self.x += self.velocity_x
+        self.y += self.velocity_y
+        
+        # 画面端の処理
+        self.x = max(0, min(SCREEN_WIDTH - self.width, self.x))
+        self.y = max(0, min(SCREEN_HEIGHT - self.height, self.y))
+        
+        # 向きの更新
+        if dx != 0:
+            self.facing_right = dx > 0
+        
+        # 移動方向の記録（8方向）
+        if dx != 0 or dy != 0:
+            if dx < 0:
+                if dy < 0: self.last_direction = 'northwest'
+                elif dy > 0: self.last_direction = 'southwest'
+                else: self.last_direction = 'west'
+            elif dx > 0:
+                if dy < 0: self.last_direction = 'northeast'
+                elif dy > 0: self.last_direction = 'southeast'
+                else: self.last_direction = 'east'
+            else:
+                if dy < 0: self.last_direction = 'north'
+                else: self.last_direction = 'south'
+
+        # エフェクトの更新
+        self.ring_effects = [effect for effect in self.ring_effects if effect.update()]
+
     def find_nearest_enemy(self, enemies, force_next=False):
         if not enemies:
             return None
@@ -236,187 +595,17 @@ class Player:
             self.facing_right = dx > 0
 
     def take_damage(self, damage):
-        if self.invincible_time <= 0:
-            self.hp -= damage
-            self.invincible_time = 60  # 1秒間の無敵時間
-            sound_effects.play('damage')  # ダメージ音を再生
-            return True
-        return False
+        # ダメージを受けてHPが減少
+        self.hp = max(0, self.hp - damage)
         
-    def move(self, keys):
-        if self.invincible_time > 0:
-            self.invincible_time -= 1
+        # 被弾エフェクト
+        self.damage_effect_time = 15  # 15フレーム（約0.25秒）の無敵時間
         
-        # ダッシュのクールダウンを更新
-        if self.dash_cooldown > 0:
-            self.dash_cooldown -= 1
-
-        # キー入力の状態を更新
-        self.input_buffer['left'] = keys[pygame.K_LEFT]
-        self.input_buffer['right'] = keys[pygame.K_RIGHT]
-        self.input_buffer['up'] = keys[pygame.K_UP]
-        self.input_buffer['down'] = keys[pygame.K_DOWN]
-        
-        # ダッシュの処理を改善
-        shift_pressed = keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT]
-        self.was_dashing = self.is_dashing
-        
-        if shift_pressed and self.dash_cooldown <= 0 and not self.is_dashing:
-            # ダッシュ開始
-            self.is_dashing = True
-            self.dash_duration = 90
-            sound_effects.play('dash')
-        elif self.is_dashing:
-            if self.dash_duration > 0:
-                self.dash_duration -= 1
-                # ダッシュ中のエフェクト生成
-                if pygame.time.get_ticks() % 2 == 0:  # 2フレームごとにエフェクト生成
-                    center_x = self.x + self.width/2
-                    center_y = self.y + self.height/2
-                    self.ring_effects.append(RingEffect(center_x, center_y, (255, 255, 255), 30, 4, 0.1))
-            else:
-                # ダッシュ終了
-                self.is_dashing = False
-                self.dash_cooldown = self.dash_cooldown_time
-
-        # 移動方向の初期化
-        current_direction = None
-        self.dx = 0
-        self.dy = 0
-
-        # 8方向移動の入力処理（バッファを使用）
-        if self.input_buffer['left']:
-            self.dx -= 1
-            self.facing_right = False
-        if self.input_buffer['right']:
-            self.dx += 1
-            self.facing_right = True
-        if self.input_buffer['up']:
-            self.dy -= 1
-        if self.input_buffer['down']:
-            self.dy += 1
-            
-        # 斜め移動時の入力を正規化
-        if self.dx != 0 and self.dy != 0:
-            length = math.sqrt(2)  # √2で正規化
-            self.dx /= length
-            self.dy /= length
-        
-        # 移動方向の記録（8方向）
-        if self.dx != 0 or self.dy != 0:
-            if self.dx < 0:
-                if self.dy < 0: current_direction = 'northwest'
-                elif self.dy > 0: current_direction = 'southwest'
-                else: current_direction = 'west'
-            elif self.dx > 0:
-                if self.dy < 0: current_direction = 'northeast'
-                elif self.dy > 0: current_direction = 'southeast'
-                else: current_direction = 'east'
-            else:
-                if self.dy < 0: current_direction = 'north'
-                else: current_direction = 'south'
-            
-        # ヒートゲージの管理
-        if self.is_dashing:
-            if current_direction and current_direction != self.last_direction:
-                self.heat = min(100, self.heat + 10)  # 方向転換時のヒート上昇を増加
-            elif current_direction:
-                self.heat = min(100, self.heat + 0.5)  # 通常時のヒート上昇も少し増加
-        else:
-            self.heat = max(0, self.heat - 1.5)  # 冷却速度を増加
-            
-        # ヒートが100%になると強制的に通常速度に
-        max_speed = self.max_velocity if self.heat >= 100 or not self.is_dashing else self.max_dash_velocity
-            
-        self.last_direction = current_direction
-        
-        # 速度の更新
-        if self.dx != 0:
-            # 加速
-            self.velocity_x += self.dx * self.acceleration
-            # 最大速度制限
-            self.velocity_x = max(-max_speed, min(max_speed, self.velocity_x))
-        else:
-            # 減速
-            if self.velocity_x > 0:
-                self.velocity_x = max(0, self.velocity_x - self.deceleration)
-            elif self.velocity_x < 0:
-                self.velocity_x = min(0, self.velocity_x + self.deceleration)
-                
-        if self.dy != 0:
-            # 加速
-            self.velocity_y += self.dy * self.acceleration
-            # 最大速度制限
-            self.velocity_y = max(-max_speed, min(max_speed, self.velocity_y))
-        else:
-            # 減速
-            if self.velocity_y > 0:
-                self.velocity_y = max(0, self.velocity_y - self.deceleration)
-            elif self.velocity_y < 0:
-                self.velocity_y = min(0, self.velocity_y + self.deceleration)
-        
-        # 位置の更新
-        self.x += self.velocity_x
-        self.y += self.velocity_y
-            
-        # 画面端の処理
-        self.x = max(0, min(SCREEN_WIDTH - self.width, self.x))
-        self.y = max(0, min(SCREEN_HEIGHT - self.height, self.y))
-        
-        # エフェクトの更新
-        self.ring_effects = [effect for effect in self.ring_effects if effect.update()]
-        
-    def find_cluster_center(self, enemies):
-        if not enemies:
-            return None
-            
-        # プレイヤーの周囲500ピクセル以内の敵のみを対象とする
-        nearby_enemies = []
-        player_center_x = self.x + self.width/2
-        player_center_y = self.y + self.height/2
-        
-        for enemy in enemies:
-            enemy_center_x = enemy.x + enemy.width/2
-            enemy_center_y = enemy.y + enemy.height/2
-            dx = enemy_center_x - player_center_x
-            dy = enemy_center_y - player_center_y
-            distance = math.sqrt(dx * dx + dy * dy)
-            
-            if distance <= 500:  # 500ピクセル以内の敵のみを追加
-                nearby_enemies.append(enemy)
-        
-        if not nearby_enemies:
-            return None
-            
-        # 画面を4x4のグリッドに分割
-        grid_size = 4
-        grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
-        
-        # 各グリッドの敵の数をカウント
-        for enemy in nearby_enemies:  # nearby_enemiesを使用
-            grid_x = int(enemy.x * grid_size / SCREEN_WIDTH)
-            grid_y = int(enemy.y * grid_size / SCREEN_HEIGHT)
-            grid_x = max(0, min(grid_x, grid_size-1))
-            grid_y = max(0, min(grid_y, grid_size-1))
-            grid[grid_y][grid_x] += 1
-        
-        # 最も敵が多いグリッドを見つける
-        max_count = 0
-        max_x = 0
-        max_y = 0
-        for y in range(grid_size):
-            for x in range(grid_size):
-                if grid[y][x] > max_count:
-                    max_count = grid[y][x]
-                    max_x = x
-                    max_y = y
-        
-        if max_count > 0:
-            # グリッドの中心座標を返す
-            center_x = (max_x + 0.5) * SCREEN_WIDTH / grid_size
-            center_y = (max_y + 0.5) * SCREEN_HEIGHT / grid_size
-            return (center_x, center_y)
-        return None
+        return self.hp <= 0
+    
+    def is_invincible(self):
+        # 被弾直後の無敵状態をチェック
+        return self.damage_effect_time > 0
         
     def update_charge(self, keys, enemies):
         # スペースキーが押されている間チャージ
@@ -475,11 +664,63 @@ class Player:
         return self.weapon_cooldown <= 0
 
     def update(self, keys, enemies, bullets):
+        # アドバタイズモードが有効なら自動操作を行う
+        if self.advertise_mode:
+            self.update_advertise_mode(enemies, bullets)
+        else:
+            # 通常の操作処理
+            self.move(keys)
+            self.update_lock_on(enemies, keys)
+            self.update_charge(keys, enemies)
+        
+        # 共通の更新処理
         # 射撃クールダウンの更新
-        if self.shot_cooldown > 0:
-            self.shot_cooldown -= 1
-
-        # 通常射撃（チャージしていない場合）
+        if self.weapon_cooldown > 0:
+            self.weapon_cooldown -= 1
+        
+        # ビームライフルのクールダウン更新
+        if self.beam_rifle_cooldown > 0:
+            self.beam_rifle_cooldown -= 1
+            
+        # リングエフェクトの更新
+        self.ring_effects = [effect for effect in self.ring_effects if effect.update()]
+                
+        # ダッシュエフェクトの更新
+        self.dash_effects = [effect for effect in self.dash_effects if effect.update()]
+                
+        # 被弾エフェクトの更新
+        if self.damage_effect_time > 0:
+            self.damage_effect_time -= 1
+        
+        # 通常射撃の処理
+        if keys[pygame.K_SPACE] and self.can_fire():
+            # 画面上の敵を探索
+            visible_enemies = [enemy for enemy in enemies if not enemy.is_exploding and 
+                              0 <= enemy.x <= SCREEN_WIDTH and
+                              0 <= enemy.y <= SCREEN_HEIGHT]
+            
+            if visible_enemies:
+                # 最大3体までの敵を優先的に狙う
+                targets = sorted(visible_enemies, key=lambda e: ((e.x - self.x) ** 2 + (e.y - self.y) ** 2))[:3]
+                
+                sound_effects.play('shoot')
+                for target in targets:
+                    # 敵ごとにビームを発射
+                    bullet_x = self.x + (self.width if self.facing_right else 0)
+                    bullet_y = self.y + self.height // 2
+                    bullets.append(Bullet(bullet_x, bullet_y, target=target, facing_right=self.facing_right))
+                
+                # 射撃後クールダウン
+                self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
+            else:
+                # 敵がいない場合は正面に発射
+                sound_effects.play('shoot')
+                bullet_x = self.x + (self.width if self.facing_right else 0)
+                bullet_y = self.y + self.height // 2
+                bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right))
+                self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
+        
+        # チャージショットの処理
         if keys[pygame.K_SPACE] and not self.is_charging and self.shot_cooldown <= 0:
             target_pos = self.charge_target_position if self.charge_level > 0 else None
             bullets.append(Bullet(
@@ -496,7 +737,11 @@ class Player:
             self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
         
     def draw(self):
-        # エフェクトの描画（プレイヤーの前に描画）
+        # ダッシュエフェクトの描画（プレイヤーの前に描画）
+        for effect in self.dash_effects:
+            effect.draw(screen)
+
+        # 通常のエフェクトの描画
         for effect in self.ring_effects:
             effect.draw(screen)
             
@@ -627,6 +872,38 @@ class Player:
                        (self.x + self.width//2 - charge_size//2, 
                         self.y + self.height//2 - charge_size//2))
 
+        # 入力状態の表示（デバッグ情報）
+        debug_y = SCREEN_HEIGHT - 120
+        font = pygame.font.Font(None, 24)
+        
+        # キー入力状態
+        input_text = "Input: "
+        if self.input_buffer['left']: input_text += "←"
+        if self.input_buffer['right']: input_text += "→"
+        if self.input_buffer['up']: input_text += "↑"
+        if self.input_buffer['down']: input_text += "↓"
+        if self.input_buffer['shift']: input_text += " SHIFT"
+        debug_surface = font.render(input_text, True, WHITE)
+        screen.blit(debug_surface, (10, debug_y))
+        
+        # 速度情報
+        velocity_text = f"Velocity: X={self.velocity_x:.2f} Y={self.velocity_y:.2f}"
+        velocity_surface = font.render(velocity_text, True, WHITE)
+        screen.blit(velocity_surface, (10, debug_y + 20))
+        
+        # 実際の移動方向
+        direction_text = f"Direction: {self.last_direction if self.last_direction else 'none'}"
+        direction_surface = font.render(direction_text, True, WHITE)
+        screen.blit(direction_surface, (10, debug_y + 40))
+        
+        # ダッシュ状態（修正：より詳細な情報を表示）
+        dash_text = f"Dash: {'ON' if self.is_dashing else 'OFF'} (Cooldown: {self.dash_cooldown}, Duration: {self.dash_duration if self.is_dashing else 0})"
+        dash_surface = font.render(dash_text, True, WHITE if not self.is_dashing else BLUE)
+        screen.blit(dash_surface, (10, debug_y + 60))
+
+        # アドバタイズモードのデバッグ情報
+        self.draw_advertise_debug_info(screen)
+
     def draw_gauges(self):
         gauge_width = 200
         gauge_height = 15
@@ -667,6 +944,800 @@ class Player:
         heat_text = font.render(f"HEAT: {int(self.heat)}%", True, WHITE)
         screen.blit(hp_text, (gauge_x + gauge_width + margin, hp_y))
         screen.blit(heat_text, (gauge_x + gauge_width + margin, heat_y))
+
+    def find_cluster_center(self, enemies):
+        if not enemies:
+            return None
+            
+        # プレイヤーの周囲500ピクセル以内の敵のみを対象とする
+        nearby_enemies = []
+        player_center_x = self.x + self.width/2
+        player_center_y = self.y + self.height/2
+        
+        for enemy in enemies:
+            enemy_center_x = enemy.x + enemy.width/2
+            enemy_center_y = enemy.y + enemy.height/2
+            dx = enemy_center_x - player_center_x
+            dy = enemy_center_y - player_center_y
+            distance = math.sqrt(dx * dx + dy * dy)
+            
+            if distance <= 500:  # 500ピクセル以内の敵のみを追加
+                nearby_enemies.append(enemy)
+        
+        if not nearby_enemies:
+            return None
+            
+        # 画面を4x4のグリッドに分割
+        grid_size = 4
+        grid = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
+        
+        # 各グリッドの敵の数をカウント
+        for enemy in nearby_enemies:  # nearby_enemiesを使用
+            grid_x = int(enemy.x * grid_size / SCREEN_WIDTH)
+            grid_y = int(enemy.y * grid_size / SCREEN_HEIGHT)
+            grid_x = max(0, min(grid_x, grid_size-1))
+            grid_y = max(0, min(grid_y, grid_size-1))
+            grid[grid_y][grid_x] += 1
+        
+        # 最も敵が多いグリッドを見つける
+        max_count = 0
+        max_x = 0
+        max_y = 0
+        for y in range(grid_size):
+            for x in range(grid_size):
+                if grid[y][x] > max_count:
+                    max_count = grid[y][x]
+                    max_x = x
+                    max_y = y
+        
+        if max_count > 0:
+            # グリッドの中心座標を返す
+            center_x = (max_x + 0.5) * SCREEN_WIDTH / grid_size
+            center_y = (max_y + 0.5) * SCREEN_HEIGHT / grid_size
+            return (center_x, center_y)
+        return None
+        
+    # アドバタイズモード関連
+    def toggle_advertise_mode(self):
+        """アドバタイズモード（自動操作）の切り替え"""
+        self.advertise_mode = not self.advertise_mode
+        # モード切り替え時にタイマーリセット
+        if self.advertise_mode:
+            self.advertise_action_timer = 0
+            self.advertise_movement_timer = 0
+            self.advertise_target_x = None
+            self.advertise_target_y = None
+            # 画面認識モードの初期化
+            self.visual_mode = True  # 画面認識モードをオン
+            self.detected_enemies = []  # 画面から検出した敵
+            self.detected_safe_zones = []  # 画面から検出した安全地帯
+            self.visual_analysis_timer = 0  # 画面分析タイマー
+        return self.advertise_mode
+        
+    def update_advertise_mode(self, enemies, bullets):
+        """アドバタイズモードの更新処理"""
+        if not self.advertise_mode:
+            return
+
+        # 自機の状態をチェック
+        if self.hp < self.max_hp * 0.3:  # HPが30%以下になったら危険回避行動
+            # HPが低い時は攻撃頻度を下げて回避行動を優先
+            self.advertise_action_interval = 120  # 通常の2倍の間隔
+        else:
+            # HPが十分ある時は通常の攻撃頻度
+            self.advertise_action_interval = 60
+            
+        # 画面分析（10フレームごと）
+        self.visual_analysis_timer += 1
+        if self.visual_mode and self.visual_analysis_timer >= 10:
+            self.visual_analysis_timer = 0
+            self.analyze_screen()
+            
+        # 移動処理の更新（画面認識結果を使用）
+        if self.visual_mode:
+            self.update_advertise_movement_visual()
+        else:
+            # 従来の内部データ参照方式
+            self.update_advertise_movement(enemies)
+        
+        # アクション処理の更新
+        self.advertise_action_timer += 1
+        if self.advertise_action_timer >= self.advertise_action_interval:
+            self.advertise_action_timer = 0
+            if self.visual_mode:
+                self.perform_advertise_action_visual(bullets)
+            else:
+                self.perform_advertise_action(enemies, bullets)
+                
+    def analyze_screen(self):
+        """画面をキャプチャして分析"""
+        # 画面全体をキャプチャ
+        screen_copy = screen.copy()
+        
+        # 敵の検出（赤色ピクセルを探す）
+        self.detected_enemies = []
+        
+        # 画面を小さなグリッドに分割して分析（パフォーマンス向上のため）
+        grid_size = 20  # 20x20ピクセルのグリッド
+        for x in range(0, SCREEN_WIDTH, grid_size):
+            for y in range(0, SCREEN_HEIGHT, grid_size):
+                # このグリッド内の一部のピクセルをサンプリング
+                grid_rect = pygame.Rect(x, y, grid_size, grid_size)
+                grid_surface = screen_copy.subsurface(grid_rect)
+                
+                # 中央のピクセルの色を取得
+                try:
+                    center_color = grid_surface.get_at((grid_size//2, grid_size//2))
+                    
+                    # 敵の色（赤系）を検出
+                    if center_color[0] > 150 and center_color[1] < 100 and center_color[2] < 100:
+                        # 敵らしきピクセルを検出
+                        enemy_pos = (x + grid_size//2, y + grid_size//2)
+                        
+                        # 既に近い位置で検出済みでなければ追加
+                        is_new = True
+                        for ex, ey in self.detected_enemies:
+                            dist = math.sqrt((ex - enemy_pos[0])**2 + (ey - enemy_pos[1])**2)
+                            if dist < 40:  # 近い位置にある場合は同じ敵と判断
+                                is_new = False
+                                break
+                                
+                        if is_new:
+                            self.detected_enemies.append(enemy_pos)
+                except:
+                    # インデックスエラーなどは無視
+                    pass
+        
+        # 安全地帯の検出（暗い領域 = 敵が少ない）
+        self.detected_safe_zones = []
+        
+        # 画面を4x4の大きなグリッドに分割
+        safe_grid_size_x = SCREEN_WIDTH // 4
+        safe_grid_size_y = SCREEN_HEIGHT // 4
+        
+        for x in range(0, SCREEN_WIDTH, safe_grid_size_x):
+            for y in range(0, SCREEN_HEIGHT, safe_grid_size_y):
+                # このグリッド内の敵の数をカウント
+                enemy_count = 0
+                for ex, ey in self.detected_enemies:
+                    if x <= ex < x + safe_grid_size_x and y <= ey < y + safe_grid_size_y:
+                        enemy_count += 1
+                
+                # 敵が少ないグリッドを安全地帯として記録
+                if enemy_count == 0:
+                    safe_center = (x + safe_grid_size_x//2, y + safe_grid_size_y//2)
+                    self.detected_safe_zones.append(safe_center)
+    
+    def update_advertise_movement_visual(self):
+        """画面認識に基づく移動更新"""
+        # 移動タイマーの更新
+        self.advertise_movement_timer += 1
+        
+        # 危険な敵を探す（検出した敵から判断）
+        dangerous_enemies = []
+        for ex, ey in self.detected_enemies:
+            # プレイヤーと敵の距離を計算
+            dx = ex - (self.x + self.width/2)
+            dy = ey - (self.y + self.height/2)
+            distance = math.sqrt(dx*dx + dy*dy)
+            
+            if distance < 150:  # 150ピクセル以内は危険
+                dangerous_enemies.append((ex, ey, distance))
+        
+        # 距離でソート（最も近い敵を優先）
+        dangerous_enemies.sort(key=lambda e: e[2])
+        
+        # 危険な敵がいる場合は回避行動を優先
+        if dangerous_enemies:
+            # 最も危険な敵
+            ex, ey, _ = dangerous_enemies[0]
+            
+            # 敵から離れる方向を計算
+            dx = (self.x + self.width/2) - ex
+            dy = (self.y + self.height/2) - ey
+            
+            # 回避方向の正規化
+            distance = max(1, math.sqrt(dx*dx + dy*dy))
+            dx /= distance
+            dy /= distance
+            
+            # 画面端に近い場合、方向を調整
+            if self.x < 50:
+                dx = max(0, dx)  # 左端なら右方向に修正
+            elif self.x > SCREEN_WIDTH - 50:
+                dx = min(0, dx)  # 右端なら左方向に修正
+                
+            if self.y < 50:
+                dy = max(0, dy)  # 上端なら下方向に修正
+            elif self.y > SCREEN_HEIGHT - 50:
+                dy = min(0, dy)  # 下端なら上方向に修正
+            
+            # 緊急回避のためダッシュを使用
+            move_speed = self.dash_speed
+            
+            # ダッシュエフェクト
+            center_x = self.x + self.width/2
+            center_y = self.y + self.height/2
+            self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+            self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+            
+            # 回避移動
+            self.x += dx * move_speed
+            self.y += dy * move_speed
+            
+            # 回避行動のため目標位置リセット
+            self.advertise_target_x = None
+            self.advertise_target_y = None
+        else:
+            # 通常の移動ロジック（危険がない場合）
+            # 新しい目標位置の設定
+            if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration:
+                self.advertise_movement_timer = 0
+                
+                # 安全地帯があれば、その中からランダムに目標を選択
+                if self.detected_safe_zones:
+                    safe_spot = random.choice(self.detected_safe_zones)
+                    self.advertise_target_x = safe_spot[0]
+                    self.advertise_target_y = safe_spot[1]
+                else:
+                    # 安全地帯がなければ、画面中央付近をターゲットに
+                    margin = 100  # 画面端からのマージン
+                    self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
+                    self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
+            
+            # 目標位置に向かって移動
+            if self.advertise_target_x is not None:
+                # 現在位置と目標位置の差分
+                dx = self.advertise_target_x - (self.x + self.width/2)
+                dy = self.advertise_target_y - (self.y + self.height/2)
+                
+                # 差分が小さい場合、到着したと判断
+                if abs(dx) < 10 and abs(dy) < 10:
+                    self.advertise_target_x = None
+                    self.advertise_target_y = None
+                    return
+                
+                # 移動方向の正規化
+                distance = max(1, math.sqrt(dx*dx + dy*dy))
+                dx /= distance
+                dy /= distance
+                
+                # 向きの更新
+                if dx > 0:
+                    self.facing_right = True
+                elif dx < 0:
+                    self.facing_right = False
+                
+                # 最終的な速度を計算
+                move_speed = self.max_speed
+                if random.random() < 0.05:  # 5%の確率でダッシュ
+                    move_speed = self.dash_speed
+                    # ダッシュエフェクト
+                    center_x = self.x + self.width/2
+                    center_y = self.y + self.height/2
+                    # 外側のリング
+                    self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+                    self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3.2, 0.1))
+                    # 内側のリング
+                    self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+                    self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.7, 0.15))
+                    
+                # 移動の適用
+                self.x += dx * move_speed
+                self.y += dy * move_speed
+        
+        # 画面外に出ないように調整
+        self.x = max(0, min(SCREEN_WIDTH - self.width, self.x))
+        self.y = max(0, min(SCREEN_HEIGHT - self.height, self.y))
+                
+    def perform_advertise_action_visual(self, bullets):
+        """画面認識に基づくアクション実行"""
+        # ランダムなアクションを選択
+        action = random.choice([
+            "beam_rifle",  # 通常射撃
+            "charge_shot", # チャージショット
+            "dash",        # ダッシュ
+            "scan"         # 敵スキャン
+        ])
+        
+        if action == "beam_rifle" and self.can_fire():
+            # 通常射撃 - 検出した敵がいれば、その方向に射撃
+            if self.detected_enemies:
+                # 最も近い敵を狙う
+                target_positions = []
+                for ex, ey in self.detected_enemies:
+                    dx = ex - (self.x + self.width/2)
+                    dy = ey - (self.y + self.height/2)
+                    distance = math.sqrt(dx*dx + dy*dy)
+                    target_positions.append((ex, ey, distance))
+                
+                # 距離でソート
+                target_positions.sort(key=lambda e: e[2])
+                
+                # 最大3体まで狙う
+                targets = target_positions[:3]
+                
+                sound_effects.play('shoot')
+                for tx, ty, _ in targets:
+                    # 敵の方向に弾を発射
+                    bullet_x = self.x + (self.width if self.facing_right else 0)
+                    bullet_y = self.y + self.height // 2
+                    
+                    # 敵の方向を計算
+                    dx = tx - bullet_x
+                    dy = ty - bullet_y
+                    angle = math.atan2(dy, dx)
+                    
+                    # この角度情報から弾を発射
+                    facing_right = dx > 0
+                    bullets.append(Bullet(bullet_x, bullet_y, facing_right=facing_right))
+                
+                # 射撃後クールダウン
+                self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
+            else:
+                # 敵が見つからなければ正面に発射
+                sound_effects.play('shoot')
+                bullet_x = self.x + (self.width if self.facing_right else 0)
+                bullet_y = self.y + self.height // 2
+                bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right))
+                self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
+                
+        elif action == "charge_shot" and self.can_fire():
+            # チャージショット - 画面をスキャンして敵が密集している方向に発射
+            sound_effects.play('charge_shot')
+            charge_level = 1
+            bullet_x = self.x + (self.width if self.facing_right else 0)
+            bullet_y = self.y + self.height // 2
+            
+            # 敵が検出されていれば、その方向に発射
+            if self.detected_enemies:
+                # 敵の密度が高い方向を計算
+                enemy_clusters = {}
+                for ex, ey in self.detected_enemies:
+                    # 方向を45度単位で量子化
+                    dx = ex - (self.x + self.width/2)
+                    dy = ey - (self.y + self.height/2)
+                    angle = math.degrees(math.atan2(dy, dx))
+                    angle_quantized = int(angle / 45) * 45
+                    
+                    # その方向の敵カウントを増やす
+                    if angle_quantized in enemy_clusters:
+                        enemy_clusters[angle_quantized] += 1
+                    else:
+                        enemy_clusters[angle_quantized] = 1
+                
+                # 最も敵が多い方向を選択
+                if enemy_clusters:
+                    best_angle = max(enemy_clusters, key=enemy_clusters.get)
+                    # この角度から発射方向を決定
+                    dx = math.cos(math.radians(best_angle))
+                    dy = math.sin(math.radians(best_angle))
+                    facing_right = dx > 0
+                    
+                    # チャージショット発射
+                    bullets.append(Bullet(bullet_x, bullet_y, facing_right=facing_right, 
+                                         bullet_type="beam_rifle", charge_level=charge_level))
+                else:
+                    # 方向が決まらなければ正面に発射
+                    bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right, 
+                                         bullet_type="beam_rifle", charge_level=charge_level))
+            else:
+                # 敵が見つからなければ正面に発射
+                bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right, 
+                                     bullet_type="beam_rifle", charge_level=charge_level))
+            
+            # 射撃後クールダウン
+            self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"] * 3
+                
+        elif action == "dash":
+            # ダッシュ演出
+            sound_effects.play('dash')
+            # 複数のダッシュエフェクトを生成
+            for i in range(3):  # 3セットのエフェクト
+                center_x = self.x + self.width/2
+                center_y = self.y + self.height/2
+                # 外側のリング
+                self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+                # 内側のリング
+                self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+                
+        elif action == "scan":
+            # スキャン演出（周囲に広がる波紋）
+            center_x = self.x + self.width/2
+            center_y = self.y + self.height/2
+            
+            # スキャン波紋エフェクト（大中小3サイズ）
+            self.ring_effects.append(RingEffect(center_x, center_y, WHITE, 150, 4, 0.01))
+            self.ring_effects.append(RingEffect(center_x, center_y, (150, 220, 255), 100, 3, 0.015))
+            self.ring_effects.append(RingEffect(center_x, center_y, (100, 180, 255), 50, 2, 0.02))
+            
+            # 新しいターゲットを設定
+            if enemies:
+                self.locked_enemy = random.choice(enemies)
+
+    def find_dangerous_enemies(self, enemies):
+        """危険な敵（近くにいる敵）を見つける"""
+        dangerous_distance = 150  # 危険と判断する距離
+        dangerous_enemies = []
+        
+        for enemy in enemies:
+            if enemy.is_exploding:
+                continue  # 爆発中の敵は無視
+                
+            # 敵とプレイヤーの距離を計算
+            dx = (enemy.x + enemy.width/2) - (self.x + self.width/2)
+            dy = (enemy.y + enemy.height/2) - (self.y + self.height/2)
+            distance = math.sqrt(dx*dx + dy*dy)
+            
+            if distance < dangerous_distance:
+                dangerous_enemies.append((enemy, distance))
+        
+        # 距離の昇順でソート（最も近い敵を先頭に）
+        dangerous_enemies.sort(key=lambda x: x[1])
+        return [enemy for enemy, _ in dangerous_enemies]
+
+    def perform_advertise_action(self, enemies, bullets):
+        """アドバタイズモードのアクション実行"""
+        # ランダムなアクションを選択
+        action = random.choice([
+            "beam_rifle",  # 通常射撃
+            "charge_shot", # チャージショット
+            "dash",        # ダッシュ
+            "scan"         # 敵スキャン
+        ])
+        
+        if action == "beam_rifle" and self.can_fire():
+            # 通常射撃
+            # 画面上の敵を探索
+            visible_enemies = [enemy for enemy in enemies if not enemy.is_exploding and 
+                              0 <= enemy.x <= SCREEN_WIDTH and
+                              0 <= enemy.y <= SCREEN_HEIGHT]
+            
+            if visible_enemies:
+                # 最大3体までの敵を優先的に狙う
+                targets = sorted(visible_enemies, key=lambda e: ((e.x - self.x) ** 2 + (e.y - self.y) ** 2))[:3]
+                
+                sound_effects.play('shoot')
+                for target in targets:
+                    # 敵ごとにビームを発射
+                    bullet_x = self.x + (self.width if self.facing_right else 0)
+                    bullet_y = self.y + self.height // 2
+                    bullets.append(Bullet(bullet_x, bullet_y, target=target, facing_right=self.facing_right))
+                
+                # 射撃後クールダウン
+                self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
+            else:
+                # 敵がいない場合は正面に発射
+                sound_effects.play('shoot')
+                bullet_x = self.x + (self.width if self.facing_right else 0)
+                bullet_y = self.y + self.height // 2
+                bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right))
+                self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
+                
+        elif action == "charge_shot" and self.can_fire():
+            # チャージショット
+            sound_effects.play('charge_shot')
+            # 完全チャージ状態のビームを発射
+            charge_level = 1  # チャージレベルを1に変更（有効な値に）
+            bullet_x = self.x + (self.width if self.facing_right else 0)
+            bullet_y = self.y + self.height // 2
+            
+            # 敵がいる場合はその方向に発射
+            if enemies:
+                target = random.choice(enemies)
+                bullets.append(Bullet(bullet_x, bullet_y, target=target, facing_right=self.facing_right, 
+                                     bullet_type="beam_rifle", charge_level=charge_level))
+            else:
+                # 敵がいない場合は正面に発射
+                bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right, 
+                                     bullet_type="beam_rifle", charge_level=charge_level))
+            
+            # 射撃後クールダウン
+            self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"] * 3
+                
+        elif action == "dash":
+            # ダッシュ演出
+            sound_effects.play('dash')
+            # 複数のダッシュエフェクトを生成
+            for i in range(3):  # 3セットのエフェクト
+                center_x = self.x + self.width/2
+                center_y = self.y + self.height/2
+                # 外側のリング
+                self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+                # 内側のリング
+                self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+                
+        elif action == "scan":
+            # スキャン演出（周囲に広がる波紋）
+            center_x = self.x + self.width/2
+            center_y = self.y + self.height/2
+            
+            # スキャン波紋エフェクト（大中小3サイズ）
+            self.ring_effects.append(RingEffect(center_x, center_y, WHITE, 150, 4, 0.01))
+            self.ring_effects.append(RingEffect(center_x, center_y, (150, 220, 255), 100, 3, 0.015))
+            self.ring_effects.append(RingEffect(center_x, center_y, (100, 180, 255), 50, 2, 0.02))
+            
+            # 新しいターゲットを設定
+            if enemies:
+                self.locked_enemy = random.choice(enemies)
+
+    def draw_advertise_debug_info(self, screen):
+        """アドバタイズモードでのAI状態情報を表示"""
+        if not self.advertise_mode:
+            return
+            
+        # デバッグ情報のフォント
+        debug_font = pygame.font.SysFont(None, 24)
+        
+        # 背景の半透明パネル
+        panel_surface = pygame.Surface((400, 220), pygame.SRCALPHA)
+        panel_surface.fill((0, 0, 0, 180))  # 半透明の黒
+        screen.blit(panel_surface, (10, 10))
+        
+        # AI状態情報
+        y_offset = 20
+        
+        # 危険な敵の数を計算
+        dangerous_count = 0
+        if 'enemies' in globals():
+            dangerous_enemies = self.find_dangerous_enemies(enemies)
+            dangerous_count = len(dangerous_enemies)
+            
+        # 現在のAI判断を決定
+        if 'enemies' in globals() and self.find_dangerous_enemies(enemies):
+            ai_action = "Avoiding Danger" 
+        else:
+            ai_action = "Patrolling"
+        
+        # 画面認識モードに関する情報
+        vision_mode = "Visual Recognition Mode" if self.visual_mode else "Internal Data Mode"
+        detected_count = len(self.detected_enemies) if hasattr(self, 'detected_enemies') else 0
+        safe_zones = len(self.detected_safe_zones) if hasattr(self, 'detected_safe_zones') else 0
+            
+        info_lines = [
+            f"AI Status: Active ({vision_mode})",
+            f"HP: {self.hp}/{self.max_hp}",
+            f"Heat: {int(self.heat)}/{self.max_heat}",
+            f"Action Interval: {self.advertise_action_interval}f",
+            f"Next Action: {self.advertise_action_interval - self.advertise_action_timer}f",
+            f"Dangerous Enemies: {dangerous_count}",
+            f"Detected Objects: {detected_count}",
+            f"Safe Zones: {safe_zones}",
+            f"Target: {'Set' if self.advertise_target_x else 'None'}",
+            f"Dash Status: {'Active' if self.is_dashing else 'Inactive'}",
+            f"Current Decision: {ai_action}"
+        ]
+        
+        # 画面描画
+        for line in info_lines:
+            text_surface = debug_font.render(line, True, (255, 255, 255))
+            screen.blit(text_surface, (20, y_offset))
+            y_offset += 20
+        
+        # 視覚的なAI認識情報の描画
+        
+        # 1. 検出した敵を可視化（黄色い枠）
+        if hasattr(self, 'detected_enemies'):
+            for ex, ey in self.detected_enemies:
+                # 黄色い枠で検出した敵を表示
+                rect_size = 30
+                pygame.draw.rect(
+                    screen, 
+                    (255, 255, 0), 
+                    (ex - rect_size//2, ey - rect_size//2, rect_size, rect_size), 
+                    1
+                )
+                
+                # 検出状態テキスト
+                detect_text = debug_font.render("Detected", True, (255, 255, 0))
+                screen.blit(detect_text, (ex + rect_size//2, ey - rect_size//2))
+        
+        # 2. 危険な敵への認識を表示（赤い円）
+        for enemy in dangerous_enemies:
+            # 赤い円で危険な敵を強調
+            pygame.draw.circle(
+                screen, 
+                (255, 0, 0, 128), 
+                (int(enemy.x + enemy.width/2), int(enemy.y + enemy.height/2)), 
+                150, 
+                2
+            )
+            
+            # 敵からプレイヤーへの方向線（回避方向の反対）
+            pygame.draw.line(
+                screen,
+                (255, 0, 0),
+                (int(enemy.x + enemy.width/2), int(enemy.y + enemy.height/2)),
+                (int(self.x + self.width/2), int(self.y + self.height/2)),
+                1
+            )
+            
+            # 危険状態テキスト
+            danger_text = debug_font.render("Danger", True, (255, 0, 0))
+            screen.blit(danger_text, (int(enemy.x), int(enemy.y) - 20))
+        
+        # 3. 安全地帯の可視化（緑の円）
+        if hasattr(self, 'detected_safe_zones'):
+            for sx, sy in self.detected_safe_zones:
+                # 緑の円で安全地帯を表示
+                pygame.draw.circle(
+                    screen, 
+                    (0, 255, 0), 
+                    (int(sx), int(sy)), 
+                    50, 
+                    1
+                )
+                
+                # 安全地帯テキスト
+                safe_text = debug_font.render("Safe", True, (0, 255, 0))
+                screen.blit(safe_text, (int(sx) - 20, int(sy) - 10))
+        
+        # 4. 移動目標を表示（緑の×印）
+        if self.advertise_target_x and self.advertise_target_y:
+            # 緑の×印で移動目標を表示
+            target_x = int(self.advertise_target_x)
+            target_y = int(self.advertise_target_y)
+            size = 10
+            
+            # ×印を描画
+            pygame.draw.line(screen, (0, 255, 0), (target_x - size, target_y - size), 
+                           (target_x + size, target_y + size), 2)
+            pygame.draw.line(screen, (0, 255, 0), (target_x - size, target_y + size), 
+                           (target_x + size, target_y - size), 2)
+            
+            # プレイヤーから目標への線
+            pygame.draw.line(
+                screen,
+                (0, 255, 0),
+                (int(self.x + self.width/2), int(self.y + self.height/2)),
+                (target_x, target_y),
+                1
+            )
+            
+            # 目標への距離を表示
+            dx = target_x - (self.x + self.width/2)
+            dy = target_y - (self.y + self.height/2)
+            distance = math.sqrt(dx*dx + dy*dy)
+            dist_text = debug_font.render(f"{int(distance)}px", True, (0, 255, 0))
+            screen.blit(dist_text, (target_x + 15, target_y - 10))
+
+    def update_advertise_movement(self, enemies):
+        """アドバタイズモードの移動更新（内部データ参照バージョン）"""
+        # 移動タイマーの更新
+        self.advertise_movement_timer += 1
+        
+        # 危険な敵を探す（衝突回避のため）
+        dangerous_enemies = self.find_dangerous_enemies(enemies)
+        
+        # 危険な敵がいる場合は回避行動を優先
+        if dangerous_enemies:
+            # 最も危険な敵（最も近い敵）
+            nearest_enemy = dangerous_enemies[0]
+            
+            # 敵から離れる方向を計算
+            dx = (self.x + self.width/2) - (nearest_enemy.x + nearest_enemy.width/2)
+            dy = (self.y + self.height/2) - (nearest_enemy.y + nearest_enemy.height/2)
+            
+            # 回避方向の正規化
+            distance = max(1, math.sqrt(dx*dx + dy*dy))
+            dx /= distance
+            dy /= distance
+            
+            # 画面端に近い場合、方向を調整
+            if self.x < 50:
+                dx = max(0, dx)  # 左端なら右方向に修正
+            elif self.x > SCREEN_WIDTH - 50:
+                dx = min(0, dx)  # 右端なら左方向に修正
+                
+            if self.y < 50:
+                dy = max(0, dy)  # 上端なら下方向に修正
+            elif self.y > SCREEN_HEIGHT - 50:
+                dy = min(0, dy)  # 下端なら上方向に修正
+            
+            # 緊急回避のためダッシュを使用
+            move_speed = self.dash_speed
+            
+            # ダッシュエフェクト
+            center_x = self.x + self.width/2
+            center_y = self.y + self.height/2
+            self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+            self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+            
+            # 回避移動
+            self.x += dx * move_speed
+            self.y += dy * move_speed
+            
+            # 回避行動のため目標位置リセット
+            self.advertise_target_x = None
+            self.advertise_target_y = None
+        else:
+            # 通常の移動ロジック（危険がない場合）
+            # 新しい目標位置の設定
+            if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration:
+                self.advertise_movement_timer = 0
+                margin = 100  # 画面端からのマージン
+                self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
+                self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
+                
+                # ランダムではなく、敵が少ない場所を選ぶ
+                if enemies and random.random() < 0.7:  # 70%の確率で敵の少ない場所を選択
+                    # 画面を4x4のグリッドに分割
+                    grid_size = 4
+                    enemy_density = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
+                    
+                    # 各グリッドの敵密度を計算
+                    for enemy in enemies:
+                        grid_x = min(grid_size-1, max(0, int(enemy.x / SCREEN_WIDTH * grid_size)))
+                        grid_y = min(grid_size-1, max(0, int(enemy.y / SCREEN_HEIGHT * grid_size)))
+                        enemy_density[grid_y][grid_x] += 1
+                    
+                    # 敵密度の最も低いグリッドを見つける
+                    min_density = float('inf')
+                    min_x, min_y = 0, 0
+                    
+                    for y in range(grid_size):
+                        for x in range(grid_size):
+                            if enemy_density[y][x] < min_density:
+                                min_density = enemy_density[y][x]
+                                min_x, min_y = x, y
+                    
+                    # 安全なグリッド内のランダムな位置を目標に設定
+                    grid_width = SCREEN_WIDTH / grid_size
+                    grid_height = SCREEN_HEIGHT / grid_size
+                    
+                    self.advertise_target_x = random.randint(
+                        int(min_x * grid_width + margin/2), 
+                        int((min_x + 1) * grid_width - margin/2)
+                    )
+                    self.advertise_target_y = random.randint(
+                        int(min_y * grid_height + margin/2), 
+                        int((min_y + 1) * grid_height - margin/2)
+                    )
+            
+            # 目標位置に向かって移動
+            if self.advertise_target_x is not None:
+                # 現在位置と目標位置の差分
+                dx = self.advertise_target_x - (self.x + self.width/2)
+                dy = self.advertise_target_y - (self.y + self.height/2)
+                
+                # 差分が小さい場合、到着したと判断
+                if abs(dx) < 10 and abs(dy) < 10:
+                    self.advertise_target_x = None
+                    self.advertise_target_y = None
+                    return
+                
+                # 移動方向の正規化
+                distance = max(1, math.sqrt(dx*dx + dy*dy))
+                dx /= distance
+                dy /= distance
+                
+                # 向きの更新
+                if dx > 0:
+                    self.facing_right = True
+                elif dx < 0:
+                    self.facing_right = False
+                
+                # 最終的な速度を計算
+                move_speed = self.max_speed
+                if random.random() < 0.05:  # 5%の確率でダッシュ
+                    move_speed = self.dash_speed
+                    # ダッシュエフェクト
+                    center_x = self.x + self.width/2
+                    center_y = self.y + self.height/2
+                    # 外側のリング
+                    self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+                    self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3.2, 0.1))
+                    # 内側のリング
+                    self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+                    self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.7, 0.15))
+                    
+                # 移動の適用
+                self.x += dx * move_speed
+                self.y += dy * move_speed
+        
+        # 画面外に出ないように調整
+        self.x = max(0, min(SCREEN_WIDTH - self.width, self.x))
+        self.y = max(0, min(SCREEN_HEIGHT - self.height, self.y))
 
 # 弾クラス
 class Bullet:
@@ -756,24 +1827,19 @@ class Bullet:
                     # 小規模な爆発エフェクト
                     self.explosion_effects.append(RingEffect(pos[0], pos[1], NEGI_COLOR, 30, 2, 0.15))
                     self.explosion_effects.append(RingEffect(pos[0], pos[1], WHITE, 20, 1.5, 0.2))
-                    
-                    # 周囲の敵にダメージ
-                    explosion_radius = 30
-                    explosion_damage = self.damage * 0.2  # 通常の20%のダメージ
-                    
-                    for enemy in enemies[:]:
-                        dx = (enemy.x + enemy.width/2) - pos[0]
-                        dy = (enemy.y + enemy.height/2) - pos[1]
-                        distance = math.sqrt(dx * dx + dy * dy)
-                        
-                        if distance <= explosion_radius:
-                            damage_factor = 1 - (distance / explosion_radius)
-                            actual_damage = explosion_damage * damage_factor
-                            if enemy.take_damage(actual_damage):
-                                # 敵を倒した場合の処理
-                                enemies.remove(enemy)
-                                score += enemy.score
-                                sound_effects.play('enemy_destroy')
+        
+        # 通常のビームライフルの弾道爆発処理を追加
+        elif not self.penetrate and len(self.trail_positions) > 2:
+            self.trail_explosion_timer += 1
+            if self.trail_explosion_timer >= self.trail_explosion_interval:
+                self.trail_explosion_timer = 0
+                # ランダムな位置で爆発を生成
+                if len(self.trail_positions) > 2:
+                    explosion_index = random.randint(0, len(self.trail_positions) - 1)
+                    pos = self.trail_positions[explosion_index]
+                    # 青白い小規模な爆発エフェクト
+                    self.explosion_effects.append(RingEffect(pos[0], pos[1], (100, 200, 255), 20, 2, 0.15))
+                    self.explosion_effects.append(RingEffect(pos[0], pos[1], WHITE, 15, 1.5, 0.2))
         
         # 既存の移動処理
         if self.target and self.target.y > 0 and self.homing_strength > 0:
@@ -863,15 +1929,17 @@ class Bullet:
 
 # 敵クラス
 class Enemy:
-    def __init__(self, enemy_type="mob"):
+    def __init__(self, enemy_type="mob", speed_factor=1.0):
         params = ENEMY_TYPES[enemy_type]
         self.width = params["width"]
         self.height = params["height"]
         self.hp = params["hp"]
-        self.base_speed = params["base_speed"]
+        self.base_speed = params["base_speed"] * speed_factor  # 速度係数を適用
         self.color = params["color"]
         self.score = params["score"]
         self.homing_factor = params["homing_factor"]
+        self.explosion_radius = params["explosion_radius"]  # 爆発の影響範囲
+        self.explosion_damage = params["explosion_damage"]  # 爆発によるダメージ
         
         # 初期位置
         self.x = random.randint(0, SCREEN_WIDTH - self.width)
@@ -881,6 +1949,115 @@ class Enemy:
         self.dx = 0
         self.dy = 1  # 基本的に下向きに移動
         
+        # 爆発エフェクト関連
+        self.is_exploding = False
+        self.explosion_effects = []
+        self.explosion_start_time = 0
+        self.explosion_duration = 30  # 30フレームで爆発終了
+        
+        # 生存フラグ
+        self.active = True
+        
+    def deactivate(self):
+        # 敵を非アクティブにする（削除フラグを立てる）
+        self.active = False
+        return True  # 非アクティブ化に成功したことを返す
+
+    def take_damage(self, damage):
+        # ダメージを受ける処理
+        self.hp -= damage
+        
+        # HPが0以下になったら爆発開始
+        if self.hp <= 0 and not self.is_exploding:
+            self.is_exploding = True
+            # 爆発エフェクトを作成
+            self.create_explosion_effects()
+            return True  # 敵が破壊されたことを返す
+        
+        return False  # 敵はまだ生存
+
+    def create_explosion_effects(self):
+        # 爆発の中心座標
+        center_x = self.x + self.width/2
+        center_y = self.y + self.height/2
+        
+        # 爆発エフェクト配列を初期化
+        self.explosion_effects = []
+        
+        # 爆発エフェクトを作成（中心に明るい輝き）
+        self.explosion_effects.append(RingEffect(center_x, center_y, WHITE, 30, 5, 0.1))
+        
+        # 複数の破片（小さなリング）を飛散させる
+        for _ in range(20):
+            # ランダムな角度と速度
+            angle = random.uniform(0, math.pi * 2)
+            speed = random.uniform(1, 4)
+            
+            # 速度の計算
+            vel_x = math.cos(angle) * speed
+            vel_y = math.sin(angle) * speed
+            
+            # ランダムなサイズと色（赤〜オレンジ〜黄色）
+            size = random.randint(10, 30)
+            color_val = random.randint(0, 2)
+            if color_val == 0:
+                color = RED
+            elif color_val == 1:
+                color = ORANGE
+            else:
+                color = YELLOW
+            
+            # 重力と拡大・フェード速度もランダムに
+            gravity = random.uniform(0.05, 0.15)
+            expand_speed = random.uniform(0.5, 2.0)
+            fade_speed = random.uniform(0.02, 0.08)
+            
+            # エフェクト追加
+            self.explosion_effects.append(RingEffect(
+                center_x, center_y, color, size, expand_speed, fade_speed,
+                vel_x, vel_y, gravity
+            ))
+        
+        # 煙エフェクト（ゆっくり上昇する）
+        for _ in range(5):
+            offset_x = random.uniform(-10, 10)
+            offset_y = random.uniform(-10, 10)
+            size = random.randint(20, 40)
+            color = (80, 80, 80)  # 灰色
+            self.explosion_effects.append(RingEffect(
+                center_x + offset_x, center_y + offset_y, color, size, 1, 0.03,
+                0, -0.5, -0.02  # 上に向かってゆっくり移動、若干加速
+            ))
+            
+        # 爆発開始時間を記録
+        self.explosion_start_time = pygame.time.get_ticks()
+        
+        # 誘爆判定（このメソッドを呼び出した側で処理）
+        return self.check_chain_explosion()
+        
+    def check_chain_explosion(self):
+        # 誘爆した敵のリスト
+        chain_exploded = []
+        
+        # グローバル変数のenemiesリストにアクセスするため、この関数は外部から呼ばれる必要がある
+        # このメソッドを呼び出す側で、適切に処理する
+        return chain_exploded
+        
+    def update_explosion(self):
+        # 爆発エフェクトの更新
+        for effect in self.explosion_effects[:]:
+            if not effect.update():
+                self.explosion_effects.remove(effect)
+                
+        # 爆発終了判定
+        if pygame.time.get_ticks() - self.explosion_start_time >= self.explosion_duration * 16.67:  # 16.67ms/frame for 60FPS
+            # エフェクトも全て完了したら非アクティブに
+            if len(self.explosion_effects) == 0:
+                self.deactivate()
+                return False
+        
+        return True  # 爆発中
+
     def move(self, player_x, player_y):
         # プレイヤーの方向へのベクトルを計算
         target_dx = (player_x - self.x) / SCREEN_WIDTH  # 正規化
@@ -908,19 +2085,21 @@ class Enemy:
             self.x = SCREEN_WIDTH - self.width
             self.dx *= -0.5
         
-    def take_damage(self, damage):
-        self.hp -= damage
-        return self.hp <= 0
-        
     def draw(self):
-        # HPバーの表示
-        hp_width = self.width * (self.hp / ENEMY_TYPES["mob"]["hp"])
-        hp_height = 3
-        pygame.draw.rect(screen, RED, (self.x, self.y - hp_height - 2, self.width, hp_height))
-        pygame.draw.rect(screen, GREEN, (self.x, self.y - hp_height - 2, hp_width, hp_height))
-        
-        # 敵本体の描画
-        pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
+        # 爆発エフェクトの描画
+        for effect in self.explosion_effects:
+            effect.draw(screen)
+            
+        # 爆発中でない場合のみ、敵本体とHPバーを描画
+        if not self.is_exploding:
+            # HPバーの表示
+            hp_width = self.width * (self.hp / ENEMY_TYPES["mob"]["hp"])
+            hp_height = 3
+            pygame.draw.rect(screen, RED, (self.x, self.y - hp_height - 2, self.width, hp_height))
+            pygame.draw.rect(screen, GREEN, (self.x, self.y - hp_height - 2, hp_width, hp_height))
+            
+            # 敵本体の描画
+            pygame.draw.rect(screen, self.color, (self.x, self.y, self.width, self.height))
 
 # 効果音管理クラス
 class SoundEffects:
@@ -1008,21 +2187,44 @@ class SoundEffects:
 
 # ゲームの初期化
 def reset_game():
-    global player, bullets, enemies, score, game_over, sound_effects
+    global player, enemies, bullets, score, game_over, game_start_time, current_difficulty_factor, sound_effects, game_over_timer
+    
+    # ゲームオーバータイマーをリセット
+    game_over_timer = 0
+    
+    # 難易度を一段階下げる（最低値は1.0）
+    if game_over:  # ゲームオーバーからのリセットの場合
+        # 現在の難易度から0.5下げる（最低1.0）
+        current_difficulty_factor = max(1.0, current_difficulty_factor - 0.5)
+        # スコアも難易度に応じて調整
+        score = max(0, int(score * 0.7))
+    else:  # 新規ゲーム開始の場合
+        current_difficulty_factor = 1.0
+        score = 0
+    
     player = Player()
-    bullets = []
     enemies = []
-    score = 0
+    bullets = []
     game_over = False
-    sound_effects = SoundEffects()
+    game_start_time = pygame.time.get_ticks()
+    
+    # サウンドエフェクトが定義されていない場合は初期化
+    if sound_effects is None:
+        sound_effects = SoundEffects()
 
-player = Player()
-bullets = []
+# グローバル変数
+player = None
 enemies = []
-clock = pygame.time.Clock()
+bullets = []
 score = 0
 game_over = False
-sound_effects = SoundEffects()  # グローバル変数として効果音オブジェクトを作成
+game_over_timer = 0  # ゲームオーバー後の自動リスタートタイマー
+game_start_time = 0
+current_difficulty_factor = 1.0  # 難易度係数の初期値
+sound_effects = None
+
+# ゲームの初期化を実行
+reset_game()
 
 # メインゲームループ
 running = True
@@ -1031,6 +2233,15 @@ while running:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
+        elif event.type == pygame.KEYDOWN:
+            # F1キーでアドバタイズモード切り替え
+            if event.key == pygame.K_F1:
+                is_advertise_mode = player.toggle_advertise_mode()
+                print(f"Advertise Mode: {'ON' if is_advertise_mode else 'OFF'}")
+            # F2キーで画面認識モード切り替え
+            elif event.key == pygame.K_F2 and player.advertise_mode:
+                player.visual_mode = not player.visual_mode
+                print(f"Visual Recognition Mode: {'ON' if player.visual_mode else 'OFF'}")
         elif event.type == pygame.KEYUP:
             if game_over:
                 if event.key == pygame.K_SPACE:
@@ -1066,18 +2277,21 @@ while running:
     if not game_over:
         # プレイヤーの移動と状態更新
         keys = pygame.key.get_pressed()
-        player.move(keys)
-        player.update_lock_on(enemies, keys)
-        player.update_charge(keys, enemies)
-        player.update_weapon_cooldown()
+        # 全ての更新処理はupdateメソッド内で行われるようになった
         player.update(keys, enemies, bullets)
         
         # 敵の生成
-        if len(enemies) < MAX_ENEMIES and random.random() < 0.02:  # 上限チェックを追加
+        if len(enemies) < MAX_ENEMIES and random.random() < get_enemy_spawn_chance(score):  # 上限チェックを追加
+            # スコアに応じた敵タイプを選択
+            enemy_type = select_enemy_type(score)
+            
             # 出現位置をランダムに分散
-            spawn_x = random.randint(0, SCREEN_WIDTH - ENEMY_TYPES["mob"]["width"])
-            spawn_type = "mob"  # 後々の拡張用
-            new_enemy = Enemy(spawn_type)
+            spawn_x = random.randint(0, SCREEN_WIDTH - ENEMY_TYPES[enemy_type]["width"])
+            
+            # スコアに応じた速度係数を適用
+            speed_factor = get_enemy_speed_factor(score)
+            
+            new_enemy = Enemy(enemy_type, speed_factor)
             new_enemy.x = spawn_x
             enemies.append(new_enemy)
         
@@ -1089,132 +2303,79 @@ while running:
                 bullet.y < -50 or bullet.y > SCREEN_HEIGHT + 50):
                 bullets.remove(bullet)
         
-        # 敵の移動
+        # 敵の移動と状態更新
         for enemy in enemies[:]:
-            enemy.move(player.x + player.width/2, player.y + player.height/2)  # プレイヤーの中心座標を渡す
-            if enemy.y > SCREEN_HEIGHT * 1.5:  # 画面高さの1.5倍まで生存できるように変更
-                enemies.remove(enemy)
+            # 爆発中の敵の処理
+            if enemy.is_exploding:
+                enemy.update_explosion()
+                continue
                 
-        # 衝突判定
-        for enemy in enemies[:]:
-            # プレイヤーと敵の衝突
-            if (player.x < enemy.x + enemy.width and
-                player.x + player.width > enemy.x and
-                player.y < enemy.y + enemy.height and
-                player.y + player.height > enemy.y):
-                if player.take_damage(20):  # プレイヤーへのダメージ
-                    # 衝突位置に派手な爆発エフェクトを生成
-                    explosion_x = enemy.x + enemy.width/2
-                    explosion_y = enemy.y + enemy.height/2
-                    # 大きな赤いリング
-                    player.ring_effects.append(RingEffect(explosion_x, explosion_y, RED, 100, 6, 0.02))
-                    # 中くらいのオレンジのリング
-                    player.ring_effects.append(RingEffect(explosion_x, explosion_y, ORANGE, 80, 5, 0.03))
-                    # 小さな黄色いリング
-                    player.ring_effects.append(RingEffect(explosion_x, explosion_y, YELLOW, 60, 4, 0.04))
-                    enemies.remove(enemy)
-                if player.hp <= 0:
-                    game_over = True
+            # 通常の移動処理
+            enemy.move(player.x + player.width/2, player.y + player.height/2)
+            
+            # 画面外に出た敵は非アクティブ化
+            if enemy.y > SCREEN_HEIGHT * 1.5:
+                enemy.deactivate()
                 
-            # 弾と敵の衝突
+            # 弾との衝突判定
             for bullet in bullets[:]:
-                # 通常の衝突判定
                 if (bullet.x < enemy.x + enemy.width and
                     bullet.x + bullet.width > enemy.x and
                     bullet.y < enemy.y + enemy.height and
                     bullet.y + bullet.height > enemy.y):
-                    if enemy.take_damage(bullet.damage):  # ダメージ処理
-                        # 爆発位置を記録
-                        explosion_x = enemy.x + enemy.width/2
-                        explosion_y = enemy.y + enemy.height/2
-                        
-                        # 基本爆発エフェクト（より大きく、より長く）
-                        player.ring_effects.append(RingEffect(explosion_x, explosion_y, RED, 150, 8, 0.02))
-                        player.ring_effects.append(RingEffect(explosion_x, explosion_y, ORANGE, 130, 7, 0.025))
-                        player.ring_effects.append(RingEffect(explosion_x, explosion_y, YELLOW, 110, 6, 0.03))
-                        
-                        # 追加の装飾的な爆発エフェクト
-                        for i in range(5):  # 複数の小さな爆発を追加
-                            offset_x = random.randint(-30, 30)
-                            offset_y = random.randint(-30, 30)
-                            size = random.randint(40, 80)
-                            speed = random.uniform(3, 6)
-                            color = random.choice([NEGI_COLOR, WHITE, YELLOWISH_WHITE])
-                            player.ring_effects.append(RingEffect(explosion_x + offset_x, explosion_y + offset_y, 
-                                                                color, size, speed, 0.04))
-                        
-                        # チャージショットの場合、超派手な爆発を追加
-                        if bullet.penetrate:
-                            # メインの大爆発
-                            player.ring_effects.append(RingEffect(explosion_x, explosion_y, NEGI_COLOR, 200, 10, 0.015))
-                            player.ring_effects.append(RingEffect(explosion_x, explosion_y, WHITE, 180, 9, 0.02))
-                            player.ring_effects.append(RingEffect(explosion_x, explosion_y, NEGI_COLOR, 160, 8, 0.025))
-                            
-                            # 追加の装飾エフェクト
-                            for i in range(8):  # より多くの追加爆発
-                                offset_x = random.randint(-50, 50)
-                                offset_y = random.randint(-50, 50)
-                                size = random.randint(60, 120)
-                                speed = random.uniform(4, 8)
-                                color = random.choice([NEGI_COLOR, WHITE, YELLOWISH_WHITE])
-                                player.ring_effects.append(RingEffect(explosion_x + offset_x, explosion_y + offset_y, 
-                                                                    color, size, speed, 0.03))
-                            
-                        # 爆発による連鎖反応
-                        explosion_radius = ENEMY_TYPES["mob"]["explosion_radius"] * 1.5  # 爆発範囲を1.5倍に
-                        explosion_damage = ENEMY_TYPES["mob"]["explosion_damage"] * 1.2  # ダメージも1.2倍に
-                        
-                        # 周囲の敵に爆発ダメージを与える
-                        for nearby_enemy in enemies[:]:  # リストのコピーを使用
-                            if nearby_enemy != enemy:  # 自分自身以外の敵をチェック
-                                dx = (nearby_enemy.x + nearby_enemy.width/2) - explosion_x
-                                dy = (nearby_enemy.y + nearby_enemy.height/2) - explosion_y
-                                distance = math.sqrt(dx * dx + dy * dy)
-                                
-                                if distance <= explosion_radius:
-                                    # 距離に応じてダメージを減衰
-                                    damage_factor = 1 - (distance / explosion_radius)
-                                    actual_damage = explosion_damage * damage_factor
-                                    
-                                    if nearby_enemy.take_damage(actual_damage):
-                                        # 連鎖爆発のエフェクト
-                                        chain_x = nearby_enemy.x + nearby_enemy.width/2
-                                        chain_y = nearby_enemy.y + nearby_enemy.height/2
-                                        player.ring_effects.append(RingEffect(chain_x, chain_y, RED, 60, 4, 0.04))
-                                        player.ring_effects.append(RingEffect(chain_x, chain_y, ORANGE, 40, 3, 0.05))
-                                        
-                                        enemies.remove(nearby_enemy)
-                                        score += nearby_enemy.score
-                                        sound_effects.play('enemy_destroy')
-                                        break  # この敵の処理を完全に終了
-                        
-                        # 敵を削除し、スコアを加算
-                        enemies.remove(enemy)
+                    
+                    # 弾が敵に当たった場合
+                    if enemy.take_damage(bullet.damage):
+                        # 敵を倒した場合のスコア加算
                         score += enemy.score
                         sound_effects.play('enemy_destroy')
-                        break  # この敵の処理を完全に終了
                         
-                    if bullet in bullets and not bullet.penetrate:  # 貫通弾でない場合のみ削除
+                        # 敵の中心位置で誘爆チェック
+                        center_x = enemy.x + enemy.width/2
+                        center_y = enemy.y + enemy.height/2
+                        radius = enemy.explosion_radius
+                        
+                        # 誘爆処理（周囲の敵にダメージ）
+                        for nearby_enemy in enemies[:]:
+                            if nearby_enemy != enemy and not nearby_enemy.is_exploding:
+                                # 中心間の距離を計算
+                                nearby_center_x = nearby_enemy.x + nearby_enemy.width/2
+                                nearby_center_y = nearby_enemy.y + nearby_enemy.height/2
+                                distance = math.sqrt((center_x - nearby_center_x)**2 + (center_y - nearby_center_y)**2)
+                                
+                                # 爆発範囲内なら誘爆
+                                if distance < radius:
+                                    if nearby_enemy.take_damage(enemy.explosion_damage):
+                                        # 敵が破壊された場合のスコア加算
+                                        score += nearby_enemy.score
+                                        sound_effects.play('enemy_destroy')
+                        
+                        break  # この敵は処理済み
+                    
+                    # 貫通弾でなければ弾を削除
+                    if not bullet.penetrate and bullet in bullets:
                         bullets.remove(bullet)
-                        break  # この弾の処理を終了
-                        
-                # 爆発の当たり判定（チャージショットの場合）
-                elif bullet.penetrate:
-                    damage_rects = bullet.get_explosion_damage_rect()
-                    if damage_rects:
-                        enemy_rect = pygame.Rect(enemy.x, enemy.y, enemy.width, enemy.height)
-                        for damage_rect in damage_rects:
-                            if damage_rect.colliderect(enemy_rect):
-                                if enemy.take_damage(bullet.damage * 0.5):  # 爆発は通常の半分のダメージ
-                                    # 爆発エフェクト（小規模）
-                                    explosion_x = enemy.x + enemy.width/2
-                                    explosion_y = enemy.y + enemy.height/2
-                                    player.ring_effects.append(RingEffect(explosion_x, explosion_y, NEGI_COLOR, 60, 4, 0.1))
-                                    player.ring_effects.append(RingEffect(explosion_x, explosion_y, WHITE, 40, 3, 0.12))
-                                    enemies.remove(enemy)
-                                    score += enemy.score
-                                    sound_effects.play('enemy_destroy')
-                                    break  # この敵の処理を完全に終了
+            
+            # プレイヤーとの衝突判定
+            if not player.is_invincible() and not game_over:
+                if (player.x < enemy.x + enemy.width and
+                    player.x + player.width > enemy.x and
+                    player.y < enemy.y + enemy.height and
+                    player.y + player.height > enemy.y):
+                    
+                    # プレイヤーにダメージ
+                    player.take_damage(10)
+                    sound_effects.play('player_damage')
+                    
+                    # 敵は爆発
+                    enemy.take_damage(enemy.hp)  # 即死
+                    
+                    # ゲームオーバー判定
+                    if player.hp <= 0:
+                        game_over = True
+        
+        # 非アクティブな敵を一括削除
+        enemies = [enemy for enemy in enemies if enemy.active]
     
     # 描画
     screen.fill(BLACK)
@@ -1227,15 +2388,43 @@ while running:
     # スコア表示
     font = pygame.font.Font(None, 36)
     score_text = font.render(f"Score: {score}", True, WHITE)
-    screen.blit(score_text, (SCREEN_WIDTH - 150, 10))  # 右上に配置
+    screen.blit(score_text, (SCREEN_WIDTH - 150, 10))
     
+    # 難易度表示
+    difficulty_factor = calculate_difficulty_factor(score)
+    difficulty_name = get_difficulty_name(difficulty_factor)
+    difficulty_color = WHITE
+    if difficulty_factor > 2.0:
+        difficulty_color = ORANGE
+    if difficulty_factor > 2.5:
+        difficulty_color = RED
+    
+    difficulty_text = font.render(f"Lv: {difficulty_name}", True, difficulty_color)
+    screen.blit(difficulty_text, (SCREEN_WIDTH - 150, 45))
+    
+    # ゲームオーバー時の処理
     if game_over:
+        # アドバタイズモードなら自動的にリスタート
+        if player.advertise_mode:
+            game_over_timer += 1
+            # 3秒待ってから自動リスタート
+            if game_over_timer > 180:  # 60フレーム/秒 × 3秒 = 180フレーム
+                reset_game()
+                print("Advertise Mode: Auto-Restart")
+        
         game_over_text = font.render("GAME OVER", True, WHITE)
         screen.blit(game_over_text, (SCREEN_WIDTH//2 - 100, SCREEN_HEIGHT//2 - 30))
         
-        # リセット方法の表示
-        reset_text = font.render("Press SPACE to Restart", True, WHITE)
-        screen.blit(reset_text, (SCREEN_WIDTH//2 - 130, SCREEN_HEIGHT//2 + 20))
+        # リセット方法の表示（アドバタイズモードでない場合）
+        if not player.advertise_mode:
+            reset_text = font.render("Press SPACE to Restart", True, WHITE)
+            screen.blit(reset_text, (SCREEN_WIDTH//2 - 130, SCREEN_HEIGHT//2 + 20))
+        else:
+            # アドバタイズモードの場合はカウントダウン表示
+            seconds_left = 3 - (game_over_timer // 60)
+            if seconds_left > 0:
+                auto_reset_text = font.render(f"Auto Restart in {seconds_left}...", True, WHITE)
+                screen.blit(auto_reset_text, (SCREEN_WIDTH//2 - 130, SCREEN_HEIGHT//2 + 20))
     
     pygame.display.flip()
     clock.tick(60)
