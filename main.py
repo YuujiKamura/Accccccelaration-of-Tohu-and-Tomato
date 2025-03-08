@@ -1259,8 +1259,42 @@ class Player:
             
             return  # 誘導戦術実行中は他の行動をスキップ
         
+        # 敵の密集度に基づいて敵群の中心を計算
+        enemy_clusters = []
+        if len(self.detected_enemies) >= 3:
+            # 敵の距離が近い場合にクラスタリングを行う
+            unassigned_enemies = self.detected_enemies.copy()
+            
+            while unassigned_enemies:
+                cluster_center = unassigned_enemies.pop(0)
+                cluster = [cluster_center]
+                
+                i = 0
+                while i < len(unassigned_enemies):
+                    ex, ey = unassigned_enemies[i]
+                    cx, cy = cluster_center
+                    
+                    # クラスター中心との距離を計算
+                    distance = math.sqrt((ex - cx)**2 + (ey - cy)**2)
+                    
+                    # 一定距離以内なら同じクラスタに属する
+                    if distance < 150:
+                        cluster.append(unassigned_enemies.pop(i))
+                    else:
+                        i += 1
+                
+                # クラスタが2つ以上の敵を含む場合のみ追加
+                if len(cluster) >= 2:
+                    # クラスタの中心を計算
+                    avg_x = sum(e[0] for e in cluster) / len(cluster)
+                    avg_y = sum(e[1] for e in cluster) / len(cluster)
+                    enemy_clusters.append((avg_x, avg_y, len(cluster)))
+        
+        # 敵の密集クラスタが存在し、危険な敵がいない場合
+        large_clusters = [c for c in enemy_clusters if c[2] >= 3]  # 3体以上の敵を持つクラスタ
+        
         # 危険な敵がいる場合は回避行動を優先
-        elif dangerous_enemies:
+        if dangerous_enemies:
             # 最も危険な敵
             ex, ey, distance = dangerous_enemies[0]
             
@@ -1307,33 +1341,61 @@ class Player:
             self.advertise_target_y = None
         else:
             # 通常の移動ロジック（危険がない場合）
-            # 新しい目標位置の設定
-            if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration:
+            # 新しい目標位置の設定または大きな敵クラスタがある場合
+            if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration or large_clusters:
                 self.advertise_movement_timer = 0
-                margin = 100  # 画面端からのマージン
                 
-                # 高安全度のセーフゾーンがあれば優先的に選択
-                high_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 2]
-                medium_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 1]
-                low_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 0]
-                
-                # 優先度の高いセーフゾーンから順に選択
-                if high_safety_zones and random.random() < 0.8:  # 80%の確率で高安全地帯を選択
-                    chosen_zone = random.choice(high_safety_zones)
-                    self.advertise_target_x = chosen_zone[0]
-                    self.advertise_target_y = chosen_zone[1]
-                elif medium_safety_zones and random.random() < 0.6:  # 60%の確率で中安全地帯を選択
-                    chosen_zone = random.choice(medium_safety_zones)
-                    self.advertise_target_x = chosen_zone[0]
-                    self.advertise_target_y = chosen_zone[1]
-                elif low_safety_zones and random.random() < 0.3:  # 30%の確率で低安全地帯を選択
-                    chosen_zone = random.choice(low_safety_zones)
-                    self.advertise_target_x = chosen_zone[0]
-                    self.advertise_target_y = chosen_zone[1]
+                # 大きな敵クラスタがある場合は注力
+                if large_clusters and random.random() < 0.7:  # 70%の確率で敵クラスタに向かう
+                    # クラスタサイズで並べ替え（大きいクラスタを優先）
+                    large_clusters.sort(key=lambda c: c[2], reverse=True)
+                    chosen_cluster = large_clusters[0]
+                    
+                    # クラスタの周辺に移動するための目標位置を設定
+                    angle = random.uniform(0, 2 * math.pi)
+                    safe_distance = 250  # クラスタから安全な距離
+                    
+                    # クラスタからの安全な位置を計算
+                    self.advertise_target_x = chosen_cluster[0] + math.cos(angle) * safe_distance
+                    self.advertise_target_y = chosen_cluster[1] + math.sin(angle) * safe_distance
+                    
+                    # 画面内に収める
+                    margin = 100
+                    self.advertise_target_x = max(margin, min(SCREEN_WIDTH - margin, self.advertise_target_x))
+                    self.advertise_target_y = max(margin, min(SCREEN_HEIGHT - margin, self.advertise_target_y))
+                    
+                    # 直接ダッシュするための準備
+                    self.movement_dash_to_safe_zone = True
                 else:
-                    # セーフゾーンが見つからない場合はランダムな位置を選択
-                    self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
-                    self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
+                    margin = 100  # 画面端からのマージン
+                    self.movement_dash_to_safe_zone = False
+                    
+                    # 高安全度のセーフゾーンがあれば優先的に選択
+                    high_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 2]
+                    medium_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 1]
+                    low_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 0]
+                    
+                    # 優先度の高いセーフゾーンから順に選択
+                    if high_safety_zones and random.random() < 0.8:  # 80%の確率で高安全地帯を選択
+                        chosen_zone = random.choice(high_safety_zones)
+                        self.advertise_target_x = chosen_zone[0]
+                        self.advertise_target_y = chosen_zone[1]
+                        self.movement_dash_to_safe_zone = True  # 高安全地帯へは素早く移動
+                    elif medium_safety_zones and random.random() < 0.6:  # 60%の確率で中安全地帯を選択
+                        chosen_zone = random.choice(medium_safety_zones)
+                        self.advertise_target_x = chosen_zone[0]
+                        self.advertise_target_y = chosen_zone[1]
+                        self.movement_dash_to_safe_zone = random.random() < 0.5  # 50%の確率でダッシュ
+                    elif low_safety_zones and random.random() < 0.3:  # 30%の確率で低安全地帯を選択
+                        chosen_zone = random.choice(low_safety_zones)
+                        self.advertise_target_x = chosen_zone[0]
+                        self.advertise_target_y = chosen_zone[1]
+                        self.movement_dash_to_safe_zone = False  # 低安全地帯へはダッシュしない
+                    else:
+                        # セーフゾーンが見つからない場合はランダムな位置を選択
+                        self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
+                        self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
+                        self.movement_dash_to_safe_zone = False
             
             # 目標位置に向かって移動
             if self.advertise_target_x is not None:
@@ -1341,16 +1403,19 @@ class Player:
                 dx = self.advertise_target_x - (self.x + self.width/2)
                 dy = self.advertise_target_y - (self.y + self.height/2)
                 
+                # 目標までの距離を計算
+                distance_to_target = math.sqrt(dx*dx + dy*dy)
+                
                 # 差分が小さい場合、到着したと判断
-                if abs(dx) < 10 and abs(dy) < 10:
+                if distance_to_target < 10:
                     self.advertise_target_x = None
                     self.advertise_target_y = None
+                    self.movement_dash_to_safe_zone = False
                     return
                 
                 # 移動方向の正規化
-                distance = max(1, math.sqrt(dx*dx + dy*dy))
-                dx /= distance
-                dy /= distance
+                dx /= distance_to_target
+                dy /= distance_to_target
                 
                 # 向きの更新
                 if dx > 0:
@@ -1359,19 +1424,33 @@ class Player:
                     self.facing_right = False
                 
                 # 最終的な速度を計算
-                move_speed = self.max_speed
-                if random.random() < 0.05:  # 5%の確率でダッシュ
+                if hasattr(self, 'movement_dash_to_safe_zone') and self.movement_dash_to_safe_zone:
+                    # 安全地帯へ素早く移動するためのダッシュ
                     move_speed = self.dash_speed
-                    # ダッシュエフェクト
-                    center_x = self.x + self.width/2
-                    center_y = self.y + self.height/2
-                    # 外側のリング
-                    self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
-                    self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3.2, 0.1))
-                    # 内側のリング
-                    self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
-                    self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.7, 0.15))
                     
+                    # 一定距離ごとにダッシュエフェクトを表示
+                    if random.random() < 0.2 or distance_to_target > 200:  # 遠い場合や一定確率でエフェクト
+                        center_x = self.x + self.width/2
+                        center_y = self.y + self.height/2
+                        # 外側のリング
+                        self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+                        # 内側のリング
+                        self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+                else:
+                    # 通常移動
+                    move_speed = self.max_speed
+                    
+                    # ランダムダッシュ（確率を下げて、より計画的に）
+                    if random.random() < 0.03:  # 3%の確率でダッシュ
+                        move_speed = self.dash_speed
+                        # ダッシュエフェクト
+                        center_x = self.x + self.width/2
+                        center_y = self.y + self.height/2
+                        # 外側のリング
+                        self.dash_effects.append(RingEffect(center_x, center_y, WHITE, 40, 3, 0.1))
+                        # 内側のリング
+                        self.dash_effects.append(RingEffect(center_x, center_y, BLUE, 30, 2.5, 0.15))
+                
                 # 移動の適用
                 self.x += dx * move_speed
                 self.y += dy * move_speed
