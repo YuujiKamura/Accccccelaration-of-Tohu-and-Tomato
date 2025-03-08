@@ -376,7 +376,6 @@ class Player:
         self.is_drifting = False
         
         # 慣性とカーブ用のパラメータ
-        self.max_turn_rate = 0.15  # 最大旋回速度
         self.turn_acceleration = 0.01  # 旋回加速度
         self.current_turn_rate = 0  # 現在の旋回速度
         self.movement_angle = 0  # 現在の移動角度（ラジアン）
