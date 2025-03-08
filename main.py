@@ -1104,10 +1104,29 @@ class Player:
                     if x <= ex < x + safe_grid_size_x and y <= ey < y + safe_grid_size_y:
                         enemy_count += 1
                 
-                # 敵が少ないグリッドを安全地帯として記録
-                if enemy_count == 0:
-                    safe_center = (x + safe_grid_size_x//2, y + safe_grid_size_y//2)
-                    self.detected_safe_zones.append(safe_center)
+                # セーフゾーンの中心座標
+                safe_center = (x + safe_grid_size_x//2, y + safe_grid_size_y//2)
+                
+                # 最も近い敵との距離を計算
+                min_distance = float('inf')
+                for ex, ey in self.detected_enemies:
+                    distance = math.sqrt((safe_center[0] - ex)**2 + (safe_center[1] - ey)**2)
+                    min_distance = min(min_distance, distance)
+                
+                # 敵がいない場合は最大安全度
+                if not self.detected_enemies:
+                    min_distance = float('inf')
+                
+                # 安全度をレベル分け（0=低, 1=中, 2=高）
+                safety_level = 2  # デフォルトで最高安全度
+                if min_distance < 150:
+                    safety_level = 0  # 危険
+                elif min_distance < 300:
+                    safety_level = 1  # 中程度
+                
+                # 敵がいないグリッドまたは敵から十分離れたグリッドを安全地帯として記録
+                if enemy_count == 0 or min_distance > 100:
+                    self.detected_safe_zones.append((safe_center[0], safe_center[1], safety_level))
     
     def update_advertise_movement_visual(self):
         """画面認識に基づく移動更新"""
@@ -1292,43 +1311,29 @@ class Player:
             if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration:
                 self.advertise_movement_timer = 0
                 margin = 100  # 画面端からのマージン
-                self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
-                self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
                 
-                # ランダムではなく、敵が少ない場所を選ぶ
-                if enemies and random.random() < 0.7:  # 70%の確率で敵の少ない場所を選択
-                    # 画面を4x4のグリッドに分割
-                    grid_size = 4
-                    enemy_density = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
-                    
-                    # 各グリッドの敵密度を計算
-                    for enemy in enemies:
-                        grid_x = min(grid_size-1, max(0, int(enemy.x / SCREEN_WIDTH * grid_size)))
-                        grid_y = min(grid_size-1, max(0, int(enemy.y / SCREEN_HEIGHT * grid_size)))
-                        enemy_density[grid_y][grid_x] += 1
-                    
-                    # 敵密度の最も低いグリッドを見つける
-                    min_density = float('inf')
-                    min_x, min_y = 0, 0
-                    
-                    for y in range(grid_size):
-                        for x in range(grid_size):
-                            if enemy_density[y][x] < min_density:
-                                min_density = enemy_density[y][x]
-                                min_x, min_y = x, y
-                    
-                    # 安全なグリッド内のランダムな位置を目標に設定
-                    grid_width = SCREEN_WIDTH / grid_size
-                    grid_height = SCREEN_HEIGHT / grid_size
-                    
-                    self.advertise_target_x = random.randint(
-                        int(min_x * grid_width + margin/2), 
-                        int((min_x + 1) * grid_width - margin/2)
-                    )
-                    self.advertise_target_y = random.randint(
-                        int(min_y * grid_height + margin/2), 
-                        int((min_y + 1) * grid_height - margin/2)
-                    )
+                # 高安全度のセーフゾーンがあれば優先的に選択
+                high_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 2]
+                medium_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 1]
+                low_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 0]
+                
+                # 優先度の高いセーフゾーンから順に選択
+                if high_safety_zones and random.random() < 0.8:  # 80%の確率で高安全地帯を選択
+                    chosen_zone = random.choice(high_safety_zones)
+                    self.advertise_target_x = chosen_zone[0]
+                    self.advertise_target_y = chosen_zone[1]
+                elif medium_safety_zones and random.random() < 0.6:  # 60%の確率で中安全地帯を選択
+                    chosen_zone = random.choice(medium_safety_zones)
+                    self.advertise_target_x = chosen_zone[0]
+                    self.advertise_target_y = chosen_zone[1]
+                elif low_safety_zones and random.random() < 0.3:  # 30%の確率で低安全地帯を選択
+                    chosen_zone = random.choice(low_safety_zones)
+                    self.advertise_target_x = chosen_zone[0]
+                    self.advertise_target_y = chosen_zone[1]
+                else:
+                    # セーフゾーンが見つからない場合はランダムな位置を選択
+                    self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
+                    self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
             
             # 目標位置に向かって移動
             if self.advertise_target_x is not None:
@@ -1785,21 +1790,35 @@ class Player:
             danger_text = debug_font.render("Danger", True, (255, 0, 0))
             screen.blit(danger_text, (int(enemy.x), int(enemy.y) - 20))
         
-        # 3. 安全地帯の可視化（緑の円）
+        # 3. 安全地帯の可視化（段階的な色で表示）
         if hasattr(self, 'detected_safe_zones'):
-            for sx, sy in self.detected_safe_zones:
-                # 緑の円で安全地帯を表示
+            for sx, sy, safety_level in self.detected_safe_zones:
+                # 安全度に応じて色を選択
+                if safety_level == 2:
+                    safe_color = (0, 255, 0)  # 高安全度 - 緑
+                    radius = 50
+                    safe_text = "Safe (High)"
+                elif safety_level == 1:
+                    safe_color = (255, 255, 0)  # 中安全度 - 黄
+                    radius = 40
+                    safe_text = "Safe (Medium)"
+                else:
+                    safe_color = (255, 165, 0)  # 低安全度 - オレンジ
+                    radius = 30
+                    safe_text = "Safe (Low)"
+                
+                # 色分けされた円で安全地帯を表示
                 pygame.draw.circle(
                     screen, 
-                    (0, 255, 0), 
+                    safe_color, 
                     (int(sx), int(sy)), 
-                    50, 
+                    radius, 
                     1
                 )
                 
                 # 安全地帯テキスト
-                safe_text = debug_font.render("Safe", True, (0, 255, 0))
-                screen.blit(safe_text, (int(sx) - 20, int(sy) - 10))
+                safe_text_surface = debug_font.render(safe_text, True, safe_color)
+                screen.blit(safe_text_surface, (int(sx) - 30, int(sy) - 10))
         
         # 4. 移動目標を表示（緑の×印）
         if self.advertise_target_x and self.advertise_target_y:
@@ -1885,43 +1904,72 @@ class Player:
             if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration:
                 self.advertise_movement_timer = 0
                 margin = 100  # 画面端からのマージン
-                self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
-                self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
                 
-                # ランダムではなく、敵が少ない場所を選ぶ
-                if enemies and random.random() < 0.7:  # 70%の確率で敵の少ない場所を選択
-                    # 画面を4x4のグリッドに分割
-                    grid_size = 4
-                    enemy_density = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
-                    
-                    # 各グリッドの敵密度を計算
-                    for enemy in enemies:
-                        grid_x = min(grid_size-1, max(0, int(enemy.x / SCREEN_WIDTH * grid_size)))
-                        grid_y = min(grid_size-1, max(0, int(enemy.y / SCREEN_HEIGHT * grid_size)))
-                        enemy_density[grid_y][grid_x] += 1
-                    
-                    # 敵密度の最も低いグリッドを見つける
-                    min_density = float('inf')
-                    min_x, min_y = 0, 0
-                    
-                    for y in range(grid_size):
-                        for x in range(grid_size):
-                            if enemy_density[y][x] < min_density:
-                                min_density = enemy_density[y][x]
-                                min_x, min_y = x, y
-                    
-                    # 安全なグリッド内のランダムな位置を目標に設定
-                    grid_width = SCREEN_WIDTH / grid_size
-                    grid_height = SCREEN_HEIGHT / grid_size
-                    
-                    self.advertise_target_x = random.randint(
-                        int(min_x * grid_width + margin/2), 
-                        int((min_x + 1) * grid_width - margin/2)
-                    )
-                    self.advertise_target_y = random.randint(
-                        int(min_y * grid_height + margin/2), 
-                        int((min_y + 1) * grid_height - margin/2)
-                    )
+                # 安全地帯の評価
+                safe_zones = []
+                
+                # 画面を5x5のグリッドに分割
+                grid_size = 5
+                grid_width = SCREEN_WIDTH / grid_size
+                grid_height = SCREEN_HEIGHT / grid_size
+                
+                # 各グリッドの敵との距離に基づく安全度を計算
+                for grid_y in range(grid_size):
+                    for grid_x in range(grid_size):
+                        grid_center_x = grid_x * grid_width + grid_width / 2
+                        grid_center_y = grid_y * grid_height + grid_height / 2
+                        
+                        # 最も近い敵との距離を計算
+                        min_distance = float('inf')
+                        for enemy in enemies:
+                            enemy_center_x = enemy.x + enemy.width / 2
+                            enemy_center_y = enemy.y + enemy.height / 2
+                            distance = math.sqrt((grid_center_x - enemy_center_x)**2 + (grid_center_y - enemy_center_y)**2)
+                            min_distance = min(min_distance, distance)
+                        
+                        # 敵がいない場合は最大安全度
+                        if not enemies:
+                            min_distance = float('inf')
+                        
+                        # 安全度をレベル分け（0=低, 1=中, 2=高）
+                        safety_level = 2  # デフォルトで最高安全度
+                        if min_distance < 150:
+                            safety_level = 0  # 危険
+                        elif min_distance < 300:
+                            safety_level = 1  # 中程度
+                        
+                        # グリッド内の敵の数もカウント
+                        enemy_count = 0
+                        for enemy in enemies:
+                            if (grid_x * grid_width <= enemy.x < (grid_x + 1) * grid_width and
+                                grid_y * grid_height <= enemy.y < (grid_y + 1) * grid_height):
+                                enemy_count += 1
+                        
+                        # 敵がいないグリッドまたは敵から十分離れたグリッドを安全地帯として記録
+                        if enemy_count == 0 or min_distance > 100:
+                            safe_zones.append((grid_center_x, grid_center_y, safety_level))
+                
+                # 優先度の高いセーフゾーンから順に選択
+                high_safety_zones = [zone for zone in safe_zones if zone[2] == 2]
+                medium_safety_zones = [zone for zone in safe_zones if zone[2] == 1]
+                low_safety_zones = [zone for zone in safe_zones if zone[2] == 0]
+                
+                if high_safety_zones and random.random() < 0.8:  # 80%の確率で高安全地帯を選択
+                    chosen_zone = random.choice(high_safety_zones)
+                    self.advertise_target_x = chosen_zone[0]
+                    self.advertise_target_y = chosen_zone[1]
+                elif medium_safety_zones and random.random() < 0.6:  # 60%の確率で中安全地帯を選択
+                    chosen_zone = random.choice(medium_safety_zones)
+                    self.advertise_target_x = chosen_zone[0]
+                    self.advertise_target_y = chosen_zone[1]
+                elif low_safety_zones and random.random() < 0.3:  # 30%の確率で低安全地帯を選択
+                    chosen_zone = random.choice(low_safety_zones)
+                    self.advertise_target_x = chosen_zone[0]
+                    self.advertise_target_y = chosen_zone[1]
+                else:
+                    # セーフゾーンが見つからない場合はランダムな位置を選択
+                    self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
+                    self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
             
             # 目標位置に向かって移動
             if self.advertise_target_x is not None:
