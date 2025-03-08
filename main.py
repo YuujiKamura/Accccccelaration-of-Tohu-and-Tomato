@@ -1121,17 +1121,31 @@ class Player:
                 safety_level = 2  # デフォルトで最高安全度
                 if min_distance < 150:
                     safety_level = 0  # 危険
-                elif min_distance < 300:
+                elif min_distance < 250:  # 300から250に減らし、より厳密に中安全度を定義
                     safety_level = 1  # 中程度
                 
                 # 敵がいないグリッドまたは敵から十分離れたグリッドを安全地帯として記録
-                if enemy_count == 0 or min_distance > 100:
-                    self.detected_safe_zones.append((safe_center[0], safe_center[1], safety_level))
+                # 常に全てのグリッドをセーフゾーンとして記録（安全度レベルとともに）
+                self.detected_safe_zones.append((safe_center[0], safe_center[1], safety_level))
     
     def update_advertise_movement_visual(self):
         """画面認識に基づく移動更新"""
         # 移動タイマーの更新
         self.advertise_movement_timer += 1
+
+        # デバッグ用にAIの行動モードを設定（情報表示用）
+        if not hasattr(self, 'ai_behavior_mode'):
+            self.ai_behavior_mode = "normal"
+            self.ai_mode_timer = 0
+            self.ai_mode_duration = 60
+
+        # AIモードタイマーの更新
+        if hasattr(self, 'ai_mode_timer'):
+            self.ai_mode_timer += 1
+            if self.ai_mode_timer >= self.ai_mode_duration:
+                self.ai_mode_timer = 0
+                # デフォルトで通常パトロールに戻す
+                self.ai_behavior_mode = "normal"
         
         # 円周運動戦術の発動条件: 一定数以上の敵が検出された場合
         circular_tactic_threshold = 3  # この数以上の敵がいる場合に発動
@@ -1139,6 +1153,11 @@ class Player:
         
         # 敵が一定数以上いる場合は円周運動による誘導戦術を実行
         if use_circular_tactic:
+            # 誘導戦術の実行中であることを記録
+            self.ai_behavior_mode = "group_tactical"
+            self.ai_mode_duration = 180  # より長い持続時間
+            self.ai_mode_timer = 0
+            
             # 円運動のために時間をベースにした角度を計算
             time_factor = (pygame.time.get_ticks() % 10000) / 10000.0  # 0～1の値（10秒周期）
             angle = time_factor * 2 * math.pi  # 0～2πの角度
@@ -1295,6 +1314,11 @@ class Player:
         
         # 危険な敵がいる場合は回避行動を優先
         if dangerous_enemies:
+            # 回避行動中であることを記録
+            self.ai_behavior_mode = "evade"
+            self.ai_mode_duration = 120
+            self.ai_mode_timer = 0
+            
             # 最も危険な敵
             ex, ey, distance = dangerous_enemies[0]
             
@@ -1341,12 +1365,14 @@ class Player:
             self.advertise_target_y = None
         else:
             # 通常の移動ロジック（危険がない場合）
+            self.ai_behavior_mode = "normal"
+            
             # 新しい目標位置の設定または大きな敵クラスタがある場合
             if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration or large_clusters:
                 self.advertise_movement_timer = 0
                 
                 # 大きな敵クラスタがある場合は注力
-                if large_clusters and random.random() < 0.7:  # 70%の確率で敵クラスタに向かう
+                if large_clusters and random.random() < 0.5:  # 70%から50%に減らして安全地帯を優先
                     # クラスタサイズで並べ替え（大きいクラスタを優先）
                     large_clusters.sort(key=lambda c: c[2], reverse=True)
                     chosen_cluster = large_clusters[0]
@@ -1366,6 +1392,9 @@ class Player:
                     
                     # 直接ダッシュするための準備
                     self.movement_dash_to_safe_zone = True
+                    
+                    # ログ出力
+                    print("Moving to enemy cluster area")
                 else:
                     margin = 100  # 画面端からのマージン
                     self.movement_dash_to_safe_zone = False
@@ -1375,27 +1404,39 @@ class Player:
                     medium_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 1]
                     low_safety_zones = [zone for zone in self.detected_safe_zones if zone[2] == 0]
                     
+                    # デバッグ情報出力
+                    print(f"Safe zones found - High: {len(high_safety_zones)}, Medium: {len(medium_safety_zones)}, Low: {len(low_safety_zones)}")
+                    
                     # 優先度の高いセーフゾーンから順に選択
-                    if high_safety_zones and random.random() < 0.8:  # 80%の確率で高安全地帯を選択
-                        chosen_zone = random.choice(high_safety_zones)
-                        self.advertise_target_x = chosen_zone[0]
-                        self.advertise_target_y = chosen_zone[1]
+                    if high_safety_zones:  # 確率判定なしで常に高安全度を選択
+                        # 全ての高安全度ゾーンから、最も敵から遠いものを選択
+                        safest_zone = max(high_safety_zones, key=lambda zone: min(
+                            math.sqrt((zone[0] - ex)**2 + (zone[1] - ey)**2) 
+                            for ex, ey in self.detected_enemies
+                        ) if self.detected_enemies else float('inf'))
+                        
+                        self.advertise_target_x = safest_zone[0]
+                        self.advertise_target_y = safest_zone[1]
                         self.movement_dash_to_safe_zone = True  # 高安全地帯へは素早く移動
-                    elif medium_safety_zones and random.random() < 0.6:  # 60%の確率で中安全地帯を選択
+                        print(f"Moving to high safety zone at ({self.advertise_target_x}, {self.advertise_target_y})")
+                    elif medium_safety_zones and random.random() < 0.7:  # 60%から70%に上げて中安全地帯を選択
                         chosen_zone = random.choice(medium_safety_zones)
                         self.advertise_target_x = chosen_zone[0]
                         self.advertise_target_y = chosen_zone[1]
-                        self.movement_dash_to_safe_zone = random.random() < 0.5  # 50%の確率でダッシュ
-                    elif low_safety_zones and random.random() < 0.3:  # 30%の確率で低安全地帯を選択
+                        self.movement_dash_to_safe_zone = True  # 中安全地帯へもダッシュするように修正
+                        print(f"Moving to medium safety zone at ({self.advertise_target_x}, {self.advertise_target_y})")
+                    elif low_safety_zones and random.random() < 0.4:  # 30%から40%に上げて低安全地帯を選択
                         chosen_zone = random.choice(low_safety_zones)
                         self.advertise_target_x = chosen_zone[0]
                         self.advertise_target_y = chosen_zone[1]
-                        self.movement_dash_to_safe_zone = False  # 低安全地帯へはダッシュしない
+                        self.movement_dash_to_safe_zone = random.random() < 0.3  # 30%の確率でダッシュ
+                        print(f"Moving to low safety zone at ({self.advertise_target_x}, {self.advertise_target_y})")
                     else:
                         # セーフゾーンが見つからない場合はランダムな位置を選択
                         self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
                         self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
                         self.movement_dash_to_safe_zone = False
+                        print(f"Moving to random position at ({self.advertise_target_x}, {self.advertise_target_y})")
             
             # 目標位置に向かって移動
             if self.advertise_target_x is not None:
@@ -1427,6 +1468,7 @@ class Player:
                 if hasattr(self, 'movement_dash_to_safe_zone') and self.movement_dash_to_safe_zone:
                     # 安全地帯へ素早く移動するためのダッシュ
                     move_speed = self.dash_speed
+                    self.is_dashing = True  # ダッシュ状態を記録
                     
                     # 一定距離ごとにダッシュエフェクトを表示
                     if random.random() < 0.2 or distance_to_target > 200:  # 遠い場合や一定確率でエフェクト
@@ -1439,10 +1481,12 @@ class Player:
                 else:
                     # 通常移動
                     move_speed = self.max_speed
+                    self.is_dashing = False  # ダッシュしていない状態
                     
                     # ランダムダッシュ（確率を下げて、より計画的に）
                     if random.random() < 0.03:  # 3%の確率でダッシュ
                         move_speed = self.dash_speed
+                        self.is_dashing = True
                         # ダッシュエフェクト
                         center_x = self.x + self.width/2
                         center_y = self.y + self.height/2
@@ -2014,7 +2058,7 @@ class Player:
                         safety_level = 2  # デフォルトで最高安全度
                         if min_distance < 150:
                             safety_level = 0  # 危険
-                        elif min_distance < 300:
+                        elif min_distance < 250:  # 300から250に減らし、より厳密に中安全度を定義
                             safety_level = 1  # 中程度
                         
                         # グリッド内の敵の数もカウント
@@ -2025,8 +2069,8 @@ class Player:
                                 enemy_count += 1
                         
                         # 敵がいないグリッドまたは敵から十分離れたグリッドを安全地帯として記録
-                        if enemy_count == 0 or min_distance > 100:
-                            safe_zones.append((grid_center_x, grid_center_y, safety_level))
+                        # 常に全てのグリッドをセーフゾーンとして記録（安全度レベルとともに）
+                        safe_zones.append((grid_center_x, grid_center_y, safety_level))
                 
                 # 優先度の高いセーフゾーンから順に選択
                 high_safety_zones = [zone for zone in safe_zones if zone[2] == 2]
