@@ -1058,7 +1058,7 @@ class Player:
         self.detected_enemies = []
         
         # 画面を小さなグリッドに分割して分析（パフォーマンス向上のため）
-        grid_size = 20  # 20x20ピクセルのグリッド
+        grid_size = 10  # 20x20から10x10ピクセルのグリッドに変更して検出精度を上げる
         for x in range(0, SCREEN_WIDTH, grid_size):
             for y in range(0, SCREEN_HEIGHT, grid_size):
                 # このグリッド内の一部のピクセルをサンプリング
@@ -1069,8 +1069,10 @@ class Player:
                 try:
                     center_color = grid_surface.get_at((grid_size//2, grid_size//2))
                     
-                    # 敵の色（赤系）を検出
-                    if center_color[0] > 150 and center_color[1] < 100 and center_color[2] < 100:
+                    # 敵の色（赤系、青系、紫系など）を検出して範囲を広げる
+                    if ((center_color[0] > 150 and center_color[1] < 100 and center_color[2] < 100) or  # 赤系
+                        (center_color[0] < 100 and center_color[1] < 100 and center_color[2] > 150) or  # 青系
+                        (center_color[0] > 100 and center_color[1] < 100 and center_color[2] > 100)):   # 紫系
                         # 敵らしきピクセルを検出
                         enemy_pos = (x + grid_size//2, y + grid_size//2)
                         
@@ -1078,7 +1080,7 @@ class Player:
                         is_new = True
                         for ex, ey in self.detected_enemies:
                             dist = math.sqrt((ex - enemy_pos[0])**2 + (ey - enemy_pos[1])**2)
-                            if dist < 40:  # 近い位置にある場合は同じ敵と判断
+                            if dist < 30:  # 40から30に変更してより細かく識別
                                 is_new = False
                                 break
                                 
@@ -1091,9 +1093,9 @@ class Player:
         # 安全地帯の検出（暗い領域 = 敵が少ない）
         self.detected_safe_zones = []
         
-        # 画面を4x4の大きなグリッドに分割
-        safe_grid_size_x = SCREEN_WIDTH // 4
-        safe_grid_size_y = SCREEN_HEIGHT // 4
+        # 画面を5x5の大きなグリッドに分割（より細かく区分）
+        safe_grid_size_x = SCREEN_WIDTH // 5
+        safe_grid_size_y = SCREEN_HEIGHT // 5
         
         for x in range(0, SCREEN_WIDTH, safe_grid_size_x):
             for y in range(0, SCREEN_HEIGHT, safe_grid_size_y):
@@ -1113,6 +1115,78 @@ class Player:
         # 移動タイマーの更新
         self.advertise_movement_timer += 1
         
+        # 円周運動戦術の発動条件: 一定数以上の敵が検出された場合
+        circular_tactic_threshold = 3  # この数以上の敵がいる場合に発動
+        use_circular_tactic = len(self.detected_enemies) >= circular_tactic_threshold and random.random() < 0.15
+        
+        # 敵が一定数以上いる場合は円周運動による誘導戦術を実行
+        if use_circular_tactic:
+            # 円運動のために時間をベースにした角度を計算
+            time_factor = (pygame.time.get_ticks() % 10000) / 10000.0  # 0～1の値（10秒周期）
+            angle = time_factor * 2 * math.pi  # 0～2πの角度
+            
+            # 画面中央を中心とした円運動を計算
+            center_x = SCREEN_WIDTH // 2
+            center_y = SCREEN_HEIGHT // 2
+            radius = min(SCREEN_WIDTH, SCREEN_HEIGHT) * 0.3  # 画面の30%の半径
+            
+            # 目標座標を円周上に設定
+            target_x = center_x + math.cos(angle) * radius
+            target_y = center_y + math.sin(angle) * radius
+            
+            # 現在位置と目標位置の差分
+            dx = target_x - (self.x + self.width/2)
+            dy = target_y - (self.y + self.height/2)
+            
+            # 移動方向の正規化
+            distance = max(1, math.sqrt(dx*dx + dy*dy))
+            dx /= distance
+            dy /= distance
+            
+            # 向きの更新（移動方向を向く）
+            if dx > 0:
+                self.facing_right = True
+            elif dx < 0:
+                self.facing_right = False
+            
+            # 通常速度で移動
+            move_speed = self.max_speed * 1.2  # 少し速めに移動して円を描く
+            self.x += dx * move_speed
+            self.y += dy * move_speed
+            
+            # 誘導効果のビジュアルフィードバック
+            if random.random() < 0.2:  # 20%の確率でエフェクト発生
+                center_x = self.x + self.width/2
+                center_y = self.y + self.height/2
+                # 引きつけ効果のリング（青→白のグラデーション）
+                self.ring_effects.append(RingEffect(center_x, center_y, (100, 150, 255), 80, 2.5, 0.04))
+            
+            # 敵が十分集まったと判断したら（近距離に4体以上）、攻撃行動へのフラグを立てる
+            dangerous_enemies = []
+            for ex, ey in self.detected_enemies:
+                dx = ex - (self.x + self.width/2)
+                dy = ey - (self.y + self.height/2)
+                distance = math.sqrt(dx*dx + dy*dy)
+                if distance < 200:  # 200ピクセル以内を危険/近距離とみなす
+                    dangerous_enemies.append((ex, ey, distance))
+            
+            close_enemies_count = len(dangerous_enemies)
+            if close_enemies_count >= 4:  # 4体以上が近くに集まったら攻撃準備
+                # タイマーをリセットして次のアクションで必ず攻撃するようにする
+                self.advertise_action_timer = self.advertise_action_interval - 1
+                
+                # チャージショットのためのエフェクト
+                center_x = self.x + self.width/2
+                center_y = self.y + self.height/2
+                for i in range(3):
+                    self.ring_effects.append(RingEffect(center_x, center_y, (150, 255, 150), 50 + i*10, 2, 0.1))
+            
+            # 誘導戦術実行中は他の移動ロジックをスキップ
+            return
+        
+        # 誘導型戦術の発動条件: 既存のロジック維持
+        use_grouping_tactics = len(self.detected_enemies) >= 3 and random.random() < 0.1 and not use_circular_tactic
+        
         # 危険な敵を探す（検出した敵から判断）
         dangerous_enemies = []
         for ex, ey in self.detected_enemies:
@@ -1121,25 +1195,70 @@ class Player:
             dy = ey - (self.y + self.height/2)
             distance = math.sqrt(dx*dx + dy*dy)
             
-            if distance < 150:  # 150ピクセル以内は危険
+            if distance < 200:  # 150から200ピクセルに増加して早期検出
                 dangerous_enemies.append((ex, ey, distance))
         
         # 距離でソート（最も近い敵を優先）
         dangerous_enemies.sort(key=lambda e: e[2])
         
+        # 誘導型戦術の実行: 敵を引きつけてグループ化
+        if use_grouping_tactics and len(self.detected_enemies) >= 3:
+            # 画面の中央付近に移動して敵を引きつける
+            center_x = SCREEN_WIDTH // 2 + random.randint(-100, 100)
+            center_y = SCREEN_HEIGHT // 2 + random.randint(-100, 100)
+            
+            # 現在位置と目標位置の差分
+            dx = center_x - (self.x + self.width/2)
+            dy = center_y - (self.y + self.height/2)
+            
+            # 移動方向の正規化
+            distance = max(1, math.sqrt(dx*dx + dy*dy))
+            dx /= distance
+            dy /= distance
+            
+            # 通常速度で移動（敵を引きつけるため）
+            self.x += dx * self.max_speed * 0.7  # 少し遅めに移動して敵を惹きつける
+            self.y += dy * self.max_speed * 0.7
+            
+            # 引きつけ効果のビジュアルフィードバック
+            if random.random() < 0.3:  # 30%の確率でエフェクト発生
+                center_x = self.x + self.width/2
+                center_y = self.y + self.height/2
+                # 引きつけ効果のリング（青→白のグラデーション）
+                self.ring_effects.append(RingEffect(center_x, center_y, (100, 150, 255), 100, 3, 0.03))
+            
+            # 敵が十分集まったと判断したら（近距離に3体以上）、攻撃行動へのフラグを立てる
+            close_enemies_count = sum(1 for ex, ey, dist in dangerous_enemies if dist < 150)
+            if close_enemies_count >= 3:
+                # タイマーをリセットして次のアクションで必ず攻撃するようにする
+                self.advertise_action_timer = self.advertise_action_interval - 1
+                
+                # チャージショットのためのエフェクト
+                center_x = self.x + self.width/2
+                center_y = self.y + self.height/2
+                for i in range(3):
+                    self.ring_effects.append(RingEffect(center_x, center_y, (150, 255, 150), 50 + i*10, 2, 0.1))
+            
+            return  # 誘導戦術実行中は他の行動をスキップ
+        
         # 危険な敵がいる場合は回避行動を優先
-        if dangerous_enemies:
+        elif dangerous_enemies:
             # 最も危険な敵
-            ex, ey, _ = dangerous_enemies[0]
+            ex, ey, distance = dangerous_enemies[0]
             
             # 敵から離れる方向を計算
             dx = (self.x + self.width/2) - ex
             dy = (self.y + self.height/2) - ey
             
             # 回避方向の正規化
-            distance = max(1, math.sqrt(dx*dx + dy*dy))
-            dx /= distance
-            dy /= distance
+            magnitude = max(1, math.sqrt(dx*dx + dy*dy))
+            dx /= magnitude
+            dy /= magnitude
+            
+            # 敵との距離に応じて回避の緊急度を調整
+            urgency_factor = 1.0
+            if distance < 100:  # かなり近い
+                urgency_factor = 1.5  # より急いで逃げる
             
             # 画面端に近い場合、方向を調整
             if self.x < 50:
@@ -1153,7 +1272,7 @@ class Player:
                 dy = min(0, dy)  # 下端なら上方向に修正
             
             # 緊急回避のためダッシュを使用
-            move_speed = self.dash_speed
+            move_speed = self.dash_speed * urgency_factor
             
             # ダッシュエフェクト
             center_x = self.x + self.width/2
@@ -1173,17 +1292,44 @@ class Player:
             # 新しい目標位置の設定
             if self.advertise_target_x is None or self.advertise_movement_timer >= self.advertise_movement_duration:
                 self.advertise_movement_timer = 0
+                margin = 100  # 画面端からのマージン
+                self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
+                self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
                 
-                # 安全地帯があれば、その中からランダムに目標を選択
-                if self.detected_safe_zones:
-                    safe_spot = random.choice(self.detected_safe_zones)
-                    self.advertise_target_x = safe_spot[0]
-                    self.advertise_target_y = safe_spot[1]
-                else:
-                    # 安全地帯がなければ、画面中央付近をターゲットに
-                    margin = 100  # 画面端からのマージン
-                    self.advertise_target_x = random.randint(margin, SCREEN_WIDTH - margin)
-                    self.advertise_target_y = random.randint(margin, SCREEN_HEIGHT - margin)
+                # ランダムではなく、敵が少ない場所を選ぶ
+                if enemies and random.random() < 0.7:  # 70%の確率で敵の少ない場所を選択
+                    # 画面を4x4のグリッドに分割
+                    grid_size = 4
+                    enemy_density = [[0 for _ in range(grid_size)] for _ in range(grid_size)]
+                    
+                    # 各グリッドの敵密度を計算
+                    for enemy in enemies:
+                        grid_x = min(grid_size-1, max(0, int(enemy.x / SCREEN_WIDTH * grid_size)))
+                        grid_y = min(grid_size-1, max(0, int(enemy.y / SCREEN_HEIGHT * grid_size)))
+                        enemy_density[grid_y][grid_x] += 1
+                    
+                    # 敵密度の最も低いグリッドを見つける
+                    min_density = float('inf')
+                    min_x, min_y = 0, 0
+                    
+                    for y in range(grid_size):
+                        for x in range(grid_size):
+                            if enemy_density[y][x] < min_density:
+                                min_density = enemy_density[y][x]
+                                min_x, min_y = x, y
+                    
+                    # 安全なグリッド内のランダムな位置を目標に設定
+                    grid_width = SCREEN_WIDTH / grid_size
+                    grid_height = SCREEN_HEIGHT / grid_size
+                    
+                    self.advertise_target_x = random.randint(
+                        int(min_x * grid_width + margin/2), 
+                        int((min_x + 1) * grid_width - margin/2)
+                    )
+                    self.advertise_target_y = random.randint(
+                        int(min_y * grid_height + margin/2), 
+                        int((min_y + 1) * grid_height - margin/2)
+                    )
             
             # 目標位置に向かって移動
             if self.advertise_target_x is not None:
@@ -1229,27 +1375,49 @@ class Player:
         # 画面外に出ないように調整
         self.x = max(0, min(SCREEN_WIDTH - self.width, self.x))
         self.y = max(0, min(SCREEN_HEIGHT - self.height, self.y))
-                
+
     def perform_advertise_action_visual(self, bullets):
         """画面認識に基づくアクション実行"""
-        # ランダムなアクションを選択
-        action = random.choice([
-            "beam_rifle",  # 通常射撃
-            "charge_shot", # チャージショット
-            "dash",        # ダッシュ
-            "scan"         # 敵スキャン
-        ])
+        # アクション選択の重み付けを変更して攻撃を優先
+        action_weights = {
+            "beam_rifle": 0.45,  # 頻度を増加
+            "charge_shot": 0.25, # チャージショットも増加
+            "dash": 0.2,        
+            "scan": 0.1         
+        }
+        
+        # 重み付けに基づいてアクションを選択
+        actions = list(action_weights.keys())
+        weights = list(action_weights.values())
+        action = random.choices(actions, weights=weights, k=1)[0]
+        
+        # 敵が近くにいる場合は攻撃確率を上げる
+        close_enemies = []
+        for ex, ey in self.detected_enemies:
+            dx = ex - (self.x + self.width/2)
+            dy = ey - (self.y + self.height/2)
+            distance = math.sqrt(dx*dx + dy*dy)
+            if distance < 300:  # 300ピクセル以内なら接近中と判断
+                close_enemies.append((ex, ey, distance))
+        
+        # 接近してくる敵がいる場合は80%の確率で攻撃アクションに強制変更
+        if close_enemies and random.random() < 0.8:
+            action = random.choice(["beam_rifle", "charge_shot"])
+        
+        # 周囲に多数の敵が集まっている場合（誘導戦術の結果）は必ずチャージショット
+        group_attack_threshold = 3  # この数以上の敵が近くにいる場合
+        close_enemies_count = len([e for e in close_enemies if e[2] < 150])
+        if close_enemies_count >= group_attack_threshold:
+            action = "charge_shot"
         
         if action == "beam_rifle" and self.can_fire():
             # 通常射撃 - 検出した敵がいれば、その方向に射撃
             if self.detected_enemies:
-                # 最も近い敵を狙う
-                target_positions = []
-                for ex, ey in self.detected_enemies:
-                    dx = ex - (self.x + self.width/2)
-                    dy = ey - (self.y + self.height/2)
-                    distance = math.sqrt(dx*dx + dy*dy)
-                    target_positions.append((ex, ey, distance))
+                # 接近中の敵を優先
+                target_positions = close_enemies if close_enemies else [
+                    (ex, ey, math.sqrt((ex - (self.x + self.width/2))**2 + (ey - (self.y + self.height/2))**2))
+                    for ex, ey in self.detected_enemies
+                ]
                 
                 # 距離でソート
                 target_positions.sort(key=lambda e: e[2])
@@ -1270,7 +1438,9 @@ class Player:
                     
                     # この角度情報から弾を発射
                     facing_right = dx > 0
-                    bullets.append(Bullet(bullet_x, bullet_y, facing_right=facing_right))
+                    # ターゲット座標を明示的に設定
+                    target_pos = (tx, ty)
+                    bullets.append(Bullet(bullet_x, bullet_y, facing_right=facing_right, target_pos=target_pos))
                 
                 # 射撃後クールダウン
                 self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"]
@@ -1291,42 +1461,89 @@ class Player:
             
             # 敵が検出されていれば、その方向に発射
             if self.detected_enemies:
-                # 敵の密度が高い方向を計算
-                enemy_clusters = {}
-                for ex, ey in self.detected_enemies:
-                    # 方向を45度単位で量子化
-                    dx = ex - (self.x + self.width/2)
-                    dy = ey - (self.y + self.height/2)
-                    angle = math.degrees(math.atan2(dy, dx))
-                    angle_quantized = int(angle / 45) * 45
+                # 集団攻撃モード: 複数の敵が近くにいる場合
+                if close_enemies_count >= group_attack_threshold:
+                    # 群集の中心を計算
+                    total_x, total_y = 0, 0
+                    for ex, ey, _ in close_enemies:
+                        total_x += ex
+                        total_y += ey
+                    center_x = total_x / len(close_enemies)
+                    center_y = total_y / len(close_enemies)
                     
-                    # その方向の敵カウントを増やす
-                    if angle_quantized in enemy_clusters:
-                        enemy_clusters[angle_quantized] += 1
-                    else:
-                        enemy_clusters[angle_quantized] = 1
-                
-                # 最も敵が多い方向を選択
-                if enemy_clusters:
-                    best_angle = max(enemy_clusters, key=enemy_clusters.get)
-                    # この角度から発射方向を決定
-                    dx = math.cos(math.radians(best_angle))
-                    dy = math.sin(math.radians(best_angle))
+                    # 群集の中心に向けてチャージショット
+                    dx = center_x - (self.x + self.width/2)
+                    dy = center_y - (self.y + self.height/2)
                     facing_right = dx > 0
+                    target_pos = (center_x, center_y)
+                    
+                    # チャージショット発射（集団攻撃用の特別パラメータ）
+                    # より強力なチャージショット
+                    charge_level = 1  # 最大チャージ
+                    
+                    # 爆発的なエフェクト（攻撃エフェクト強化）
+                    for i in range(5):
+                        center_x = self.x + self.width/2
+                        center_y = self.y + self.height/2
+                        self.ring_effects.append(RingEffect(
+                            center_x, center_y, 
+                            (150 + random.randint(0, 105), 200 + random.randint(0, 55), 150),
+                            30 + i*10, 2 + random.random(), 0.08 + random.random() * 0.05
+                        ))
                     
                     # チャージショット発射
                     bullets.append(Bullet(bullet_x, bullet_y, facing_right=facing_right, 
-                                         bullet_type="beam_rifle", charge_level=charge_level))
+                                         bullet_type="beam_rifle", charge_level=charge_level, target_pos=target_pos))
+                
+                # 通常の接近敵優先ロジック
+                elif close_enemies:
+                    # 最も近い敵に向けてチャージショット
+                    ex, ey, _ = min(close_enemies, key=lambda e: e[2])
+                    dx = ex - (self.x + self.width/2)
+                    dy = ey - (self.y + self.height/2)
+                    facing_right = dx > 0
+                    target_pos = (ex, ey)
+                    
+                    # チャージショット発射
+                    bullets.append(Bullet(bullet_x, bullet_y, facing_right=facing_right, 
+                                         bullet_type="beam_rifle", charge_level=charge_level, target_pos=target_pos))
                 else:
-                    # 方向が決まらなければ正面に発射
-                    bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right, 
-                                         bullet_type="beam_rifle", charge_level=charge_level))
+                    # 敵の密度が高い方向を計算
+                    enemy_clusters = {}
+                    for ex, ey in self.detected_enemies:
+                        # 方向を45度単位で量子化
+                        dx = ex - (self.x + self.width/2)
+                        dy = ey - (self.y + self.height/2)
+                        angle = math.degrees(math.atan2(dy, dx))
+                        angle_quantized = int(angle / 45) * 45
+                        
+                        # その方向の敵カウントを増やす
+                        if angle_quantized in enemy_clusters:
+                            enemy_clusters[angle_quantized] += 1
+                        else:
+                            enemy_clusters[angle_quantized] = 1
+                    
+                    # 最も敵が多い方向を選択
+                    if enemy_clusters:
+                        best_angle = max(enemy_clusters, key=enemy_clusters.get)
+                        # この角度から発射方向を決定
+                        dx = math.cos(math.radians(best_angle))
+                        dy = math.sin(math.radians(best_angle))
+                        facing_right = dx > 0
+                        
+                        # チャージショット発射
+                        bullets.append(Bullet(bullet_x, bullet_y, facing_right=facing_right, 
+                                             bullet_type="beam_rifle", charge_level=charge_level))
+                    else:
+                        # 方向が決まらなければ正面に発射
+                        bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right, 
+                                             bullet_type="beam_rifle", charge_level=charge_level))
             else:
                 # 敵が見つからなければ正面に発射
                 bullets.append(Bullet(bullet_x, bullet_y, facing_right=self.facing_right, 
                                      bullet_type="beam_rifle", charge_level=charge_level))
             
-            # 射撃後クールダウン
+            # 射撃後クールダウン（チャージショット後は少し長く）
             self.weapon_cooldown = BULLET_TYPES["beam_rifle"]["cooldown"] * 3
                 
         elif action == "dash":
@@ -1470,7 +1687,7 @@ class Player:
         debug_font = pygame.font.SysFont(None, 24)
         
         # 背景の半透明パネル
-        panel_surface = pygame.Surface((400, 220), pygame.SRCALPHA)
+        panel_surface = pygame.Surface((400, 240), pygame.SRCALPHA)  # 高さを少し増やす
         panel_surface.fill((0, 0, 0, 180))  # 半透明の黒
         screen.blit(panel_surface, (10, 10))
         
@@ -1482,7 +1699,20 @@ class Player:
         if 'enemies' in globals():
             dangerous_enemies = self.find_dangerous_enemies(enemies)
             dangerous_count = len(dangerous_enemies)
+        
+        # AIの行動モードを表示
+        if hasattr(self, 'ai_behavior_mode'):
+            mode_text = {
+                "normal": "Normal Patrolling",
+                "evade": "Evading Danger",
+                "group_tactical": "Group Tactical Mode"
+            }.get(self.ai_behavior_mode, "Unknown")
             
+            mode_info = f"AI Behavior: {mode_text} ({self.ai_mode_timer}/{self.ai_mode_duration})"
+            mode_surface = debug_font.render(mode_info, True, (255, 255, 255))
+            screen.blit(mode_surface, (20, y_offset))
+            y_offset += 25
+        
         # 現在のAI判断を決定
         if 'enemies' in globals() and self.find_dangerous_enemies(enemies):
             ai_action = "Avoiding Danger" 
@@ -2228,16 +2458,28 @@ reset_game()
 
 # メインゲームループ
 running = True
+show_control_message = True  # ゲーム開始時にコントロールメッセージを表示
+control_message_timer = 180  # 3秒間表示（60FPS×3）
+
 while running:
     # イベント処理
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             running = False
         elif event.type == pygame.KEYDOWN:
+            # アドバタイズモード中に任意のキーが押されたら操作モードに切り替え
+            if player.advertise_mode and event.key not in [pygame.K_F1, pygame.K_F2]:
+                player.advertise_mode = False
+                show_control_message = True  # コントロールメッセージを再表示
+                control_message_timer = 180
+                print("Switched to Manual Control Mode")
             # F1キーでアドバタイズモード切り替え
-            if event.key == pygame.K_F1:
+            elif event.key == pygame.K_F1:
                 is_advertise_mode = player.toggle_advertise_mode()
                 print(f"Advertise Mode: {'ON' if is_advertise_mode else 'OFF'}")
+                if is_advertise_mode:
+                    show_control_message = True
+                    control_message_timer = 180
             # F2キーで画面認識モード切り替え
             elif event.key == pygame.K_F2 and player.advertise_mode:
                 player.visual_mode = not player.visual_mode
@@ -2379,12 +2621,55 @@ while running:
     
     # 描画
     screen.fill(BLACK)
+    
+    # ... existing drawing code ...
+    
+    # プレイヤー、敵、弾の描画
     player.draw()
-    for bullet in bullets:
-        bullet.draw()
-    for enemy in enemies:
+    for enemy in enemies[:]:
         enemy.draw()
+    for bullet in bullets[:]:
+        bullet.draw()
         
+    # 自機のゲージ描画
+    player.draw_gauges()
+    
+    # 操作説明メッセージの表示
+    if show_control_message:
+        control_message_timer -= 1
+        if control_message_timer <= 0:
+            show_control_message = False
+        
+        # 半透明の背景パネル
+        message_panel = pygame.Surface((500, 150), pygame.SRCALPHA)
+        message_panel.fill((0, 0, 0, 180))
+        screen.blit(message_panel, (SCREEN_WIDTH//2 - 250, SCREEN_HEIGHT - 180))
+        
+        # メッセージテキスト
+        message_font = pygame.font.SysFont(None, 28)
+        
+        if player.advertise_mode:
+            messages = [
+                "ADVERTISE MODE ACTIVE",
+                "Press any key to take manual control",
+                "F1: Toggle Advertise Mode",
+                "F2: Toggle Visual Recognition Mode"
+            ]
+        else:
+            messages = [
+                "MANUAL CONTROL MODE",
+                "Arrow Keys: Move",
+                "SPACE: Charge Shot",
+                "SHIFT: Dash",
+                "F1: Switch to Advertise Mode"
+            ]
+        
+        y_offset = SCREEN_HEIGHT - 160
+        for msg in messages:
+            msg_surface = message_font.render(msg, True, (255, 255, 255))
+            screen.blit(msg_surface, (SCREEN_WIDTH//2 - msg_surface.get_width()//2, y_offset))
+            y_offset += 30
+    
     # スコア表示
     font = pygame.font.Font(None, 36)
     score_text = font.render(f"Score: {score}", True, WHITE)
