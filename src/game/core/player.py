@@ -3,6 +3,7 @@ import math
 import random
 from src.game.core.dash_spec import DashSpec
 from src.game.core.bullet import Bullet, BULLET_TYPES
+from src.game.weapons.negi_rifle import NegiRifle, NEGI_COLOR, DARK_GREEN
 
 # 画面設定（オリジナルのmain.pyから取得）
 SCREEN_WIDTH = 800
@@ -106,11 +107,8 @@ class Player:
         self.ring_effects = []
         
         # 武器関連
-        self.weapon_cooldown = 0
-        self.beam_rifle_cooldown = 0
-        self.beam_rifle_cooldown_time = 20  # ビームライフルのクールダウン時間
-        self.charge_level = 0
-        self.charge_target_position = None
+        self.weapon = NegiRifle()  # ネギライフルを初期化
+        self.weapon.owner = self  # 武器の所有者を設定
         
         # ドリフト関連
         self.drift_angle = 0      # ドリフト時の角度
@@ -460,20 +458,42 @@ class Player:
         # ロックオン更新
         self.update_lock_on(enemies, keys)
         
-        # 武器のクールダウン更新
-        self.update_weapon_cooldown()
+        # bulletsリストを武器に渡す（Noneでない場合のみ）
+        if bullets is not None:
+            self.bullets = bullets
+            self.weapon.bullets = bullets  # 武器にもbulletsリストを設定
         
-        # チャージ処理の更新
-        self.update_charge(keys, bullets)
+        # 武器の更新
+        dt = 1.0 / 60.0  # 60FPSを想定
+        self.weapon.update(dt)
         
-        # 射撃処理
-        # Zキーが押されているかチェック
-        shoot_button_pressed = keys[pygame.K_z]
+        # チャージ処理
+        if keys.get(pygame.K_x, False):  # Xキーでチャージ
+            if not self.weapon.is_charging:
+                self.weapon.start_charge()
+            self.weapon.update_charge(dt)
+        elif self.weapon.is_charging:  # キーが離されたらチャージ解放
+            # チャージレベルを取得してから解放
+            charge_level = self.weapon.charge_level
+            self.weapon.release_charge()
+            
+            # チャージショットの発射処理
+            target_pos = None
+            if self.locked_enemy:
+                target_pos = (self.locked_enemy.x + self.locked_enemy.width/2, 
+                            self.locked_enemy.y + self.locked_enemy.height/2)
+            # チャージレベルを一時的に設定して射撃
+            self.weapon.charge_level = charge_level
+            self.weapon.shoot((self.x + self.width/2, self.y + self.height/2), target_pos)
+            self.weapon.charge_level = 0
         
-        if shoot_button_pressed and not self.is_charging:
-            # 射撃可能な状態であれば発射
-            if self.can_fire("beam_rifle"):
-                self.fire_normal_shot(bullets)
+        # 通常射撃
+        if keys.get(pygame.K_z, False) and not self.weapon.is_charging:  # Zキーで通常射撃
+            target_pos = None
+            if self.locked_enemy:
+                target_pos = (self.locked_enemy.x + self.locked_enemy.width/2,
+                            self.locked_enemy.y + self.locked_enemy.height/2)
+            self.weapon.shoot((self.x + self.width/2, self.y + self.height/2), target_pos)
         
     def draw(self, screen):
         """プレイヤーの描画"""
@@ -495,6 +515,24 @@ class Player:
             
             # ダッシュエフェクト描画
             pygame.draw.rect(screen, effect_color, (effect_x, effect_y, effect_width, effect_height))
+            
+        # 武器の描画
+        # 武器の位置をプレイヤーの中心に設定
+        weapon_pos = (self.x + self.width // 2, self.y + self.height // 2)
+        
+        # 武器の角度を計算
+        weapon_angle = 0
+        if self.locked_enemy:
+            # ロックオン時は敵の方向を向く
+            dx = self.locked_enemy.x - self.x
+            dy = self.locked_enemy.y - self.y
+            weapon_angle = math.degrees(math.atan2(dy, dx))
+        elif not self.facing_right:
+            # 左向きの場合は180度回転
+            weapon_angle = 180
+            
+        # 武器を描画
+        self.weapon.draw(screen, weapon_pos, weapon_angle)
         
     def draw_gauges(self, screen):
         """ゲージの描画"""
