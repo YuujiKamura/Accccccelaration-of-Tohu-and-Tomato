@@ -1,0 +1,133 @@
+{
+  "timestamp": "2025-03-09T19:45:49.765328",
+  "total_execution_time": 5.222615003585815,
+  "total_tests": 10,
+  "successful_tests": 10,
+  "failed_tests": 0,
+  "pass_rate": 100.0,
+  "categories": {
+    "dash": {
+      "total": 2,
+      "passed": 2,
+      "failed": 0,
+      "pass_rate": 100.0
+    },
+    "movement": {
+      "total": 8,
+      "passed": 8,
+      "failed": 0,
+      "pass_rate": 100.0
+    }
+  },
+  "class_stats": {
+    "TestAdvancedMovement": {
+      "total": 10,
+      "passed": 10,
+      "failed": 0,
+      "pass_rate": 100.0
+    }
+  },
+  "failed_test_details": [],
+  "test_results": [
+    {
+      "test_name": "test_dash_curve_movement",
+      "class_name": "TestAdvancedMovement",
+      "category": "dash",
+      "description": "ダッシュ中のカーブ移動",
+      "execution_time": 0.5331981182098389,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_dash_direction_change",
+      "class_name": "TestAdvancedMovement",
+      "category": "dash",
+      "description": "ダッシュ中の方向転換",
+      "execution_time": 0.45514440536499023,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_down",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 下",
+      "execution_time": 0.4555788040161133,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_down_left",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 左下",
+      "execution_time": 0.515007734298706,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_down_right",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 右下",
+      "execution_time": 0.5459058284759521,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_left",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 左",
+      "execution_time": 0.5819315910339355,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_right",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 右",
+      "execution_time": 0.5322167873382568,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_up",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 上",
+      "execution_time": 0.5264439582824707,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_up_left",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 左上",
+      "execution_time": 0.47524523735046387,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    },
+    {
+      "test_name": "test_movement_8way_up_right",
+      "class_name": "TestAdvancedMovement",
+      "category": "movement",
+      "description": "8方向移動: 右上",
+      "execution_time": 0.5951144695281982,
+      "success": true,
+      "error_type": null,
+      "error_message": null
+    }
+  ]
+}

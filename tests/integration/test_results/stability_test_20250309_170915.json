@@ -1,0 +1,10 @@
+{
+  "frames": 1800,
+  "elapsed_time": 0.008999347686767578,
+  "average_frame_time": 4.999637603759765e-06,
+  "max_frame_time": 0.0010111331939697266,
+  "min_frame_time": 0.0,
+  "final_score": 3100,
+  "enemies_count": 4,
+  "bullets_count": 0
+}

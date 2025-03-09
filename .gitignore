@@ -1,1 +1,44 @@
- 
+# Python関連
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# デバッグ関連
+debug_captures/
+user_data/
+
+# 仮想環境
+venv/
+ENV/
+
+# IDE関連
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS関連
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ローカル設定
+local_settings.py 

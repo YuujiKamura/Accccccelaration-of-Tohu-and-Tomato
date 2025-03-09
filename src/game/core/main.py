@@ -2,12 +2,7 @@ import pygame
 import random
 import math
 import numpy
-import sys
-import os
-
-# srcディレクトリをパスに追加
-sys.path.append(os.path.dirname(os.path.abspath(__file__)))
-from src.game.core.dash_spec import DashSpec
+from src.game.core.dash_spec import DashSpec  # 仕様ファイルの名前を修正
 
 # 初期化
 pygame.init()
@@ -3206,7 +3201,3 @@ while running:
     clock.tick(60)
 
 pygame.quit() 
-
-# このファイルが直接実行された場合
-if __name__ == "__main__":
-    print("メインゲームがルートから直接実行されました")

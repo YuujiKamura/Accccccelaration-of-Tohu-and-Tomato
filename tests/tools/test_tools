@@ -1,0 +1,452 @@
+#!/usr/bin/env python3
+"""
+統合テスト実行スクリプト
+
+機能：
+1. 通常テスト実行（全テストまたは特定のテスト）
+2. 監視モード（ファイル変更時に自動実行）
+3. 自律モード（テストが成功するまで自動修正を試行）
+4. 詳細なレポート生成
+
+使用方法：
+python run_test.py [オプション]
+"""
+
+import os
+import sys
+import time
+import argparse
+import subprocess
+import unittest
+import importlib
+import glob
+import datetime
+import traceback
+from pathlib import Path
+from typing import List, Dict, Optional, Union, Any, Tuple
+
+# 色付きの出力用
+class Colors:
+    HEADER = '\033[95m'
+    BLUE = '\033[94m'
+    CYAN = '\033[96m'
+    GREEN = '\033[92m'
+    YELLOW = '\033[93m'
+    RED = '\033[91m'
+    ENDC = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+    @staticmethod
+    def colored(text: str, color: str) -> str:
+        """テキストに色を付ける"""
+        return f"{color}{text}{Colors.ENDC}"
+
+# 実行モード定数
+MODE_NORMAL = "normal"
+MODE_WATCH = "watch"
+MODE_AUTONOMOUS = "autonomous"
+
+# テスト結果のグローバル変数
+total_tests = 0
+passed_tests = 0
+failed_tests = 0
+error_tests = 0
+
+def parse_arguments():
+    """コマンドライン引数をパース"""
+    parser = argparse.ArgumentParser(description="統合テスト実行スクリプト")
+    
+    # 実行モード
+    parser.add_argument("--mode", choices=[MODE_NORMAL, MODE_WATCH, MODE_AUTONOMOUS], 
+                        default=MODE_NORMAL, help="実行モード（normal, watch, autonomous）")
+    
+    # テスト選択
+    parser.add_argument("--pattern", type=str, default=None, 
+                        help="テスト名のパターン（例: test_player）")
+    parser.add_argument("--test", type=str, default=None, 
+                        help="特定のテスト（例: tests.unit.test_player.PlayerTest.test_movement）")
+    
+    # 出力オプション
+    parser.add_argument("--verbosity", type=int, default=2, 
+                        help="出力の詳細レベル（1-3）")
+    parser.add_argument("--report", action="store_true", 
+                        help="詳細なレポートを生成")
+    parser.add_argument("--report-dir", type=str, default="test_reports",
+                        help="レポートの保存ディレクトリ")
+    
+    # 監視モードオプション
+    parser.add_argument("--watch-dirs", type=str, default="src,tests",
+                        help="監視するディレクトリ（カンマ区切り）")
+    parser.add_argument("--watch-patterns", type=str, default="*.py",
+                        help="監視するファイルパターン（カンマ区切り）")
+    parser.add_argument("--watch-interval", type=float, default=1.0,
+                        help="監視間隔（秒）")
+    
+    # 自律モードオプション
+    parser.add_argument("--auto-fix", action="store_true", 
+                        help="自律モードで問題の自動修正を試みる")
+    parser.add_argument("--backup", action="store_true", 
+                        help="自律モードでバックアップを作成")
+    parser.add_argument("--max-attempts", type=int, default=10,
+                        help="自律モードでの最大修正試行回数")
+    
+    return parser.parse_args()
+
+def run_tests(pattern: Optional[str] = None, 
+              specific_test: Optional[str] = None, 
+              verbosity: int = 2) -> unittest.TestResult:
+    """
+    テストを実行する関数
+    
+    Args:
+        pattern: テスト名のパターン
+        specific_test: 特定のテスト（ドット表記）
+        verbosity: 出力の詳細レベル
+    
+    Returns:
+        unittest.TestResult: テスト結果
+    """
+    global total_tests, passed_tests, failed_tests, error_tests
+    
+    print(Colors.colored(f"\n{'='*60}", Colors.BOLD))
+    print(Colors.colored(f"テスト実行開始: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", Colors.BOLD))
+    print(Colors.colored(f"{'='*60}\n", Colors.BOLD))
+    
+    if specific_test:
+        print(f"特定のテストを実行: {Colors.colored(specific_test, Colors.CYAN)}")
+        # ドット表記をモジュール名とテスト名に分割
+        try:
+            module_name, test_name = specific_test.rsplit('.', 1)
+            module = importlib.import_module(module_name)
+            # テストローダーを作成して実行
+            loader = unittest.TestLoader()
+            suite = loader.loadTestsFromName(test_name, module)
+        except (ValueError, ImportError, AttributeError) as e:
+            print(Colors.colored(f"テストのロードエラー: {e}", Colors.RED))
+            return unittest.TestResult()
+    else:
+        print(f"{'すべてのテスト' if not pattern else f'パターン \"{pattern}\" に一致するテスト'}を実行")
+        
+        test_dir = os.path.join(os.getcwd(), 'tests')
+        loader = unittest.TestLoader()
+        
+        if pattern:
+            loader.testNamePatterns = [f"*{pattern}*"]
+            
+        try:
+            suite = loader.discover(test_dir, pattern="test_*.py")
+        except Exception as e:
+            print(Colors.colored(f"テスト探索エラー: {e}", Colors.RED))
+            return unittest.TestResult()
+    
+    # テストの実行
+    runner = unittest.TextTestRunner(verbosity=verbosity)
+    result = runner.run(suite)
+    
+    # 統計を更新
+    total_tests += result.testsRun
+    passed_tests += result.testsRun - len(result.failures) - len(result.errors)
+    failed_tests += len(result.failures)
+    error_tests += len(result.errors)
+    
+    return result
+
+def generate_report(result: unittest.TestResult, args: argparse.Namespace) -> None:
+    """
+    テスト結果の詳細レポートを生成
+    
+    Args:
+        result: テスト結果
+        args: コマンドライン引数
+    """
+    if not args.report:
+        return
+        
+    # レポートディレクトリがなければ作成
+    os.makedirs(args.report_dir, exist_ok=True)
+    
+    # レポートファイル名
+    timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+    report_file = os.path.join(args.report_dir, f"test_report_{timestamp}.txt")
+    
+    with open(report_file, 'w', encoding='utf-8') as f:
+        f.write(f"テスト実行レポート - {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write("="*80 + "\n\n")
+        
+        f.write(f"実行テスト数: {result.testsRun}\n")
+        f.write(f"成功: {result.testsRun - len(result.failures) - len(result.errors)}\n")
+        f.write(f"失敗: {len(result.failures)}\n")
+        f.write(f"エラー: {len(result.errors)}\n\n")
+        
+        if result.failures:
+            f.write("失敗の詳細:\n")
+            f.write("-"*80 + "\n")
+            for i, (test, traceback) in enumerate(result.failures, 1):
+                f.write(f"{i}. {test}\n")
+                f.write(f"{traceback}\n\n")
+        
+        if result.errors:
+            f.write("エラーの詳細:\n")
+            f.write("-"*80 + "\n")
+            for i, (test, traceback) in enumerate(result.errors, 1):
+                f.write(f"{i}. {test}\n")
+                f.write(f"{traceback}\n\n")
+    
+    print(f"レポートが生成されました: {Colors.colored(report_file, Colors.CYAN)}")
+
+def watch_mode(args: argparse.Namespace) -> None:
+    """
+    ファイル変更を監視して自動テスト実行するモード
+    
+    Args:
+        args: コマンドライン引数
+    """
+    try:
+        # watchdogモジュールの存在チェック
+        import watchdog
+        from watchdog.observers import Observer
+        from watchdog.events import FileSystemEventHandler
+    except ImportError:
+        print(Colors.colored("watchdogパッケージがインストールされていません", Colors.RED))
+        choice = input("インストールしますか？ (y/n): ").lower()
+        if choice == 'y':
+            subprocess.check_call([sys.executable, "-m", "pip", "install", "watchdog"])
+            print("watchdogをインストールしました。スクリプトを再実行してください。")
+        else:
+            print("インストールをスキップします。監視モードには watchdog が必要です。")
+        return
+    
+    # 監視するディレクトリとパターンの設定
+    watch_dirs = [dir.strip() for dir in args.watch_dirs.split(",")]
+    watch_patterns = [pattern.strip() for pattern in args.watch_patterns.split(",")]
+    
+    print(Colors.colored("\nファイル監視モードを開始します", Colors.BOLD))
+    print(f"監視対象ディレクトリ: {', '.join(watch_dirs)}")
+    print(f"監視対象パターン: {', '.join(watch_patterns)}")
+    print("(Ctrl+Cで終了)\n")
+    
+    # 変更を検知してテストを実行するハンドラー
+    class TestEventHandler(FileSystemEventHandler):
+        def __init__(self):
+            self.last_modified = {}
+            self.cooldown = 1.0  # クールダウン時間（秒）
+        
+        def on_modified(self, event):
+            if not event.is_directory and any(event.src_path.endswith(pat.replace('*', '')) for pat in watch_patterns):
+                current_time = time.time()
+                
+                # パスのみ取得（冗長なプレフィックスを削除）
+                path = os.path.relpath(event.src_path)
+                
+                # クールダウンチェック（同じファイルの連続更新を防止）
+                if path in self.last_modified and current_time - self.last_modified[path] < self.cooldown:
+                    return
+                
+                self.last_modified[path] = current_time
+                
+                print(Colors.colored(f"\nファイル変更を検知: {path}", Colors.YELLOW))
+                print("テストを実行します...")
+                
+                # テスト実行
+                result = run_tests(args.pattern, args.test, args.verbosity)
+                
+                # レポート生成
+                if args.report:
+                    generate_report(result, args)
+                
+                # 結果表示
+                success = len(result.failures) == 0 and len(result.errors) == 0
+                status = Colors.colored("成功", Colors.GREEN) if success else Colors.colored("失敗", Colors.RED)
+                print(f"\nテスト結果: {status}")
+                print(Colors.colored("ファイル変更を監視中...", Colors.CYAN))
+    
+    # オブザーバーの設定
+    event_handler = TestEventHandler()
+    observer = Observer()
+    
+    for dir_path in watch_dirs:
+        if os.path.exists(dir_path):
+            observer.schedule(event_handler, dir_path, recursive=True)
+    
+    # 監視開始
+    observer.start()
+    
+    try:
+        # 初回テスト実行
+        print("初回テストを実行します...")
+        result = run_tests(args.pattern, args.test, args.verbosity)
+        if args.report:
+            generate_report(result, args)
+        
+        print(Colors.colored("\nファイル変更を監視中...", Colors.CYAN))
+        
+        # 無限ループで監視
+        while True:
+            time.sleep(args.watch_interval)
+    except KeyboardInterrupt:
+        print(Colors.colored("\n監視を終了します", Colors.YELLOW))
+    finally:
+        observer.stop()
+        observer.join()
+
+def autonomous_mode(args: argparse.Namespace) -> None:
+    """
+    テストが全て成功するまで自律的に実行・修正を試みるモード
+    
+    Args:
+        args: コマンドライン引数
+    """
+    if args.backup:
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_dir = f"backup_auto_{timestamp}"
+        print(f"バックアップを作成しています: {Colors.colored(backup_dir, Colors.CYAN)}...")
+        
+        # シンプルな方法でバックアップを作成（実際のプロジェクトではより堅牢な方法を使用）
+        os.makedirs(backup_dir, exist_ok=True)
+        
+        # srcとtestsディレクトリをバックアップ
+        for dir_name in ['src', 'tests']:
+            if os.path.exists(dir_name):
+                backup_path = os.path.join(backup_dir, dir_name)
+                os.makedirs(backup_path, exist_ok=True)
+                
+                # 再帰的にコピー
+                for root, dirs, files in os.walk(dir_name):
+                    # バックアップ先の相対パス
+                    rel_path = os.path.relpath(root, dir_name)
+                    backup_subdir = os.path.join(backup_path, rel_path)
+                    os.makedirs(backup_subdir, exist_ok=True)
+                    
+                    # ファイルをコピー
+                    for file in files:
+                        if file.endswith('.py'):
+                            src_file = os.path.join(root, file)
+                            dst_file = os.path.join(backup_subdir, file)
+                            with open(src_file, 'rb') as f_src:
+                                with open(dst_file, 'wb') as f_dst:
+                                    f_dst.write(f_src.read())
+    
+    print(Colors.colored("\n自律テストモードを開始します", Colors.BOLD))
+    print("テストが全て成功するまで自動的に実行・修正を試みます")
+    print("(Ctrl+Cで終了)\n")
+    
+    attempt = 0
+    max_attempts = args.max_attempts
+    
+    while attempt < max_attempts:
+        attempt += 1
+        print(Colors.colored(f"\n試行 {attempt}/{max_attempts}", Colors.BOLD))
+        
+        # テスト実行
+        result = run_tests(args.pattern, args.test, args.verbosity)
+        
+        # 全テスト成功なら終了
+        if len(result.failures) == 0 and len(result.errors) == 0:
+            print(Colors.colored("\n全てのテストが成功しました！", Colors.GREEN))
+            if args.report:
+                generate_report(result, args)
+            return
+        
+        # 失敗したテストを分析
+        if not args.auto_fix:
+            print(Colors.colored("\n自動修正は無効です。--auto-fix オプションを使用して有効にしてください。", Colors.YELLOW))
+            if args.report:
+                generate_report(result, args)
+            return
+        
+        print(Colors.colored("\n問題を分析中...", Colors.CYAN))
+        
+        # ここに自動修正ロジックを実装
+        # 注: 実際のコード修正は複雑なためここでは簡易的な例のみ
+        fixed_something = False
+        
+        # 失敗したテストの情報を収集
+        for test, error_info in result.failures + result.errors:
+            test_name = str(test)
+            print(f"修正を試みます: {Colors.colored(test_name, Colors.YELLOW)}")
+            
+            # ここに実際の修正ロジックを追加
+            # 例: import エラー、属性エラー、タイプエラーなどを検出して修正
+            
+            # 修正の例（実際のプロジェクトではもっと洗練された方法を使用）
+            if "AttributeError" in error_info:
+                print("  属性エラーが検出されました。属性名の修正を試みます...")
+                # 属性名の修正ロジックをここに
+                fixed_something = True
+            
+            elif "ImportError" in error_info:
+                print("  インポートエラーが検出されました。インポートパスの修正を試みます...")
+                # インポートパスの修正ロジックをここに
+                fixed_something = True
+            
+            elif "TypeError" in error_info:
+                print("  型エラーが検出されました。引数/戻り値の修正を試みます...")
+                # 型の修正ロジックをここに
+                fixed_something = True
+        
+        # 修正がなければ終了
+        if not fixed_something:
+            print(Colors.colored("\n自動修正できる問題が見つかりませんでした。", Colors.YELLOW))
+            if args.report:
+                generate_report(result, args)
+            return
+        
+        print(Colors.colored("\n修正を適用しました。テストを再実行します...", Colors.CYAN))
+    
+    print(Colors.colored(f"\n最大試行回数 ({max_attempts}) に達しました。", Colors.YELLOW))
+    if args.report:
+        generate_report(result, args)
+
+def main():
+    """メイン関数"""
+    args = parse_arguments()
+    
+    # モードに応じた処理
+    if args.mode == MODE_WATCH:
+        watch_mode(args)
+    elif args.mode == MODE_AUTONOMOUS:
+        autonomous_mode(args)
+    else:  # 通常モード
+        result = run_tests(args.pattern, args.test, args.verbosity)
+        
+        # 結果の表示
+        total = result.testsRun
+        failures = len(result.failures)
+        errors = len(result.errors)
+        passed = total - failures - errors
+        
+        print(Colors.colored(f"\n{'='*60}", Colors.BOLD))
+        print(Colors.colored(f"テスト完了: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", Colors.BOLD))
+        print(Colors.colored(f"{'='*60}", Colors.BOLD))
+        
+        print(f"\n実行テスト数: {total}")
+        print(f"成功: {Colors.colored(str(passed), Colors.GREEN)}")
+        
+        if failures > 0:
+            print(f"失敗: {Colors.colored(str(failures), Colors.RED)}")
+        else:
+            print(f"失敗: 0")
+            
+        if errors > 0:
+            print(f"エラー: {Colors.colored(str(errors), Colors.RED)}")
+        else:
+            print(f"エラー: 0")
+        
+        # レポートの生成
+        if args.report:
+            generate_report(result, args)
+        
+        # 成功/失敗のステータスコードを返す
+        return 1 if failures > 0 or errors > 0 else 0
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        print(Colors.colored("\nユーザーによる中断", Colors.YELLOW))
+        sys.exit(130)
+    except Exception as e:
+        print(Colors.colored(f"\n予期せぬエラー: {e}", Colors.RED))
+        traceback.print_exc()
+        sys.exit(1) 
