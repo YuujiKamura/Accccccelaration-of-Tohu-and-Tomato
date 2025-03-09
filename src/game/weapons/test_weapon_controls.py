@@ -1,5 +1,6 @@
 import unittest
 import pygame
+import math
 from src.game.weapons.negi_rifle import NegiRifle
 from src.game.core.player import Player
 from src.game.core.bullet import Bullet
@@ -112,5 +113,44 @@ class TestWeaponControls(unittest.TestCase):
         self.assertIsNotNone(bullet.target)
         self.assertEqual(bullet.target, enemy)
         
+    def test_weapon_direction(self):
+        """武器の向きのテスト"""
+        # 模擬的な敵を作成
+        class MockEnemy:
+            def __init__(self, x, y):
+                self.x = x
+                self.y = y
+                self.width = 32
+                self.height = 32
+                
+        # プレイヤーの位置を設定
+        self.player.x = 300
+        self.player.y = 300
+        
+        # 右向きの場合のテスト
+        self.player.facing_right = True
+        self.player.update(self.create_mock_keys(), [], self.bullets)
+        self.assertEqual(self.player.weapon.angle, 0)  # 右向き
+        
+        # 左向きの場合のテスト
+        self.player.facing_right = False
+        self.player.update(self.create_mock_keys(), [], self.bullets)
+        self.assertEqual(self.player.weapon.angle, 180)  # 左向き
+        
+        # ロックオン時の向きテスト
+        # 右上の敵
+        enemy1 = MockEnemy(400, 200)
+        self.player.locked_enemy = enemy1
+        self.player.update(self.create_mock_keys(), [enemy1], self.bullets)
+        expected_angle1 = math.degrees(math.atan2(enemy1.y - self.player.y, enemy1.x - self.player.x))
+        self.assertAlmostEqual(self.player.weapon.angle, expected_angle1, places=1)
+        
+        # 左下の敵
+        enemy2 = MockEnemy(200, 400)
+        self.player.locked_enemy = enemy2
+        self.player.update(self.create_mock_keys(), [enemy2], self.bullets)
+        expected_angle2 = math.degrees(math.atan2(enemy2.y - self.player.y, enemy2.x - self.player.x))
+        self.assertAlmostEqual(self.player.weapon.angle, expected_angle2, places=1)
+
 if __name__ == '__main__':
     unittest.main() 

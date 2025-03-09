@@ -463,6 +463,16 @@ class Player:
             self.bullets = bullets
             self.weapon.bullets = bullets  # 武器にもbulletsリストを設定
         
+        # 武器の向きを更新
+        if self.locked_enemy:
+            # ロックオン時は敵の方向を向く
+            dx = self.locked_enemy.x - self.x
+            dy = self.locked_enemy.y - self.y
+            self.weapon.angle = math.degrees(math.atan2(dy, dx))
+        else:
+            # 通常時はプレイヤーの向きに合わせる
+            self.weapon.angle = 0 if self.facing_right else 180
+        
         # 武器の更新
         dt = 1.0 / 60.0  # 60FPSを想定
         self.weapon.update(dt)
@@ -520,19 +530,8 @@ class Player:
         # 武器の位置をプレイヤーの中心に設定
         weapon_pos = (self.x + self.width // 2, self.y + self.height // 2)
         
-        # 武器の角度を計算
-        weapon_angle = 0
-        if self.locked_enemy:
-            # ロックオン時は敵の方向を向く
-            dx = self.locked_enemy.x - self.x
-            dy = self.locked_enemy.y - self.y
-            weapon_angle = math.degrees(math.atan2(dy, dx))
-        elif not self.facing_right:
-            # 左向きの場合は180度回転
-            weapon_angle = 180
-            
         # 武器を描画
-        self.weapon.draw(screen, weapon_pos, weapon_angle)
+        self.weapon.draw(screen, weapon_pos, self.weapon.angle)
         
     def draw_gauges(self, screen):
         """ゲージの描画"""

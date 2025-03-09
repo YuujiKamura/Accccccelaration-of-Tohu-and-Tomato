@@ -24,6 +24,7 @@ class NegiRifle(BaseWeapon):
         self.max_charge = 100
         self.is_charging = False
         self.ring_effects: List[dict] = []  # リングエフェクトのリスト
+        self.angle = 0  # 武器の向き（度数法）
         
     def start_charge(self) -> None:
         """チャージを開始"""
